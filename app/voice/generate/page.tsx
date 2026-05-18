@@ -17,9 +17,22 @@ import {
 } from "../_components/ui";
 import { generateText } from "../_lib/gemini";
 import { buildRetryPrompt, buildSystemPrompt, buildUserPrompt } from "../_lib/prompt";
-import { loadProfile, loadSamples, loadSettings } from "../_lib/storage";
+import {
+  loadCorrections,
+  loadProfile,
+  loadSamples,
+  loadSettings,
+  saveCorrections,
+} from "../_lib/storage";
+import { recordCorrection } from "../_lib/corrections";
 import { findViolations, summarizeViolations } from "../_lib/styleGuard";
-import type { Sample, Settings, VoiceProfile, Violation } from "../_lib/types";
+import type {
+  CorrectionsLog,
+  Sample,
+  Settings,
+  VoiceProfile,
+  Violation,
+} from "../_lib/types";
 
 type Status =
   | { state: "idle" }
@@ -35,15 +48,25 @@ export default function GeneratePage() {
   const [samples, setSamples] = useState<Sample[]>([]);
   const [settings, setSettings] = useState<Settings | null>(null);
   const [profile, setProfile] = useState<VoiceProfile | null>(null);
+  const [corrections, setCorrections] = useState<CorrectionsLog | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [request, setRequest] = useState("");
   const [source, setSource] = useState("");
   const [status, setStatus] = useState<Status>({ state: "idle" });
   const [output, setOutput] = useState("");
+  const [lastRequest, setLastRequest] = useState("");
   const [violations, setViolations] = useState<Violation[]>([]);
   const [retried, setRetried] = useState(false);
   const [truncated, setTruncated] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [rewriteOpen, setRewriteOpen] = useState(false);
+  const [rewriteText, setRewriteText] = useState("");
+  const [rewriteNote, setRewriteNote] = useState("");
+  const [rewriteStatus, setRewriteStatus] = useState<{
+    state: "idle" | "submitting" | "done" | "error";
+    message?: string;
+    lessons?: string[];
+  }>({ state: "idle" });
 
   useEffect(() => {
     const s = loadSamples();
@@ -51,6 +74,7 @@ export default function GeneratePage() {
     setSelectedIds(new Set(s.map((x) => x.id)));
     setSettings(loadSettings());
     setProfile(loadProfile());
+    setCorrections(loadCorrections());
   }, []);
 
   const selectedSamples = useMemo(
@@ -93,11 +117,20 @@ export default function GeneratePage() {
     setViolations([]);
     setRetried(false);
     setTruncated(false);
+    setRewriteOpen(false);
+    setRewriteText("");
+    setRewriteNote("");
+    setRewriteStatus({ state: "idle" });
     setStatus({ state: "generating" });
 
     try {
-      const systemPrompt = buildSystemPrompt(selectedSamples, profile?.profile);
+      const systemPrompt = buildSystemPrompt(
+        selectedSamples,
+        profile?.profile,
+        corrections?.digest,
+      );
       const userPrompt = buildUserPrompt(request, source);
+      setLastRequest(request);
 
       const first = await generateText({
         apiKey: settings.apiKey,
@@ -147,6 +180,66 @@ export default function GeneratePage() {
     }
   }
 
+  function openRewrite() {
+    setRewriteText(output);
+    setRewriteNote("");
+    setRewriteOpen(true);
+    setRewriteStatus({ state: "idle" });
+  }
+
+  function closeRewrite() {
+    setRewriteOpen(false);
+    setRewriteStatus({ state: "idle" });
+  }
+
+  async function submitRewrite() {
+    if (!settings?.apiKey) {
+      setRewriteStatus({
+        state: "error",
+        message: "No Gemini API key. Add one in Settings.",
+      });
+      return;
+    }
+    if (!rewriteText.trim()) {
+      setRewriteStatus({
+        state: "error",
+        message: "Rewrite is empty.",
+      });
+      return;
+    }
+    if (rewriteText.trim() === output.trim()) {
+      setRewriteStatus({
+        state: "error",
+        message: "The rewrite is identical to the draft. Edit it first.",
+      });
+      return;
+    }
+    setRewriteStatus({ state: "submitting" });
+    try {
+      const currentLog = corrections ?? loadCorrections();
+      const { correction, log: nextLog } = await recordCorrection({
+        apiKey: settings.apiKey,
+        model: settings.model,
+        log: currentLog,
+        request: lastRequest,
+        draft: output,
+        rewrite: rewriteText,
+        note: rewriteNote,
+      });
+      saveCorrections(nextLog);
+      setCorrections(nextLog);
+      setRewriteStatus({
+        state: "done",
+        lessons: correction.lessons,
+      });
+    } catch (err) {
+      setRewriteStatus({
+        state: "error",
+        message: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
   async function handleCopy() {
     await navigator.clipboard.writeText(output);
     setCopied(true);
@@ -174,7 +267,7 @@ export default function GeneratePage() {
       />
 
       {hasKey && hasSamples && (
-        <div className="flex items-center gap-2 -mt-4 text-[12px]">
+        <div className="flex items-center gap-2 -mt-4 text-[12px] flex-wrap">
           {profile ? (
             <>
               <span className="inline-flex items-center gap-1.5 text-accent">
@@ -188,6 +281,19 @@ export default function GeneratePage() {
               >
                 View on Samples
               </Link>
+              {corrections && corrections.corrections.length > 0 && (
+                <>
+                  <span className="text-muted">·</span>
+                  <span className="inline-flex items-center gap-1.5 text-accent">
+                    <span className="inline-block h-1.5 w-1.5 rounded-full bg-accent" />
+                    {corrections.corrections.length}{" "}
+                    {corrections.corrections.length === 1
+                      ? "correction"
+                      : "corrections"}{" "}
+                    learned
+                  </span>
+                </>
+              )}
             </>
           ) : (
             <>
@@ -386,6 +492,116 @@ export default function GeneratePage() {
               <LegendDot color="bg-purple-500" label="Pronoun stack" />
             </div>
           )}
+
+          <div className="pt-4 border-t border-hairline">
+            {!rewriteOpen && rewriteStatus.state !== "done" && (
+              <div className="flex items-baseline justify-between gap-3 flex-wrap">
+                <div className="space-y-1">
+                  <p className="text-[13.5px] text-foreground/85">
+                    Did this miss the mark? Show me how you would write it.
+                  </p>
+                  <p className="text-[12px] text-muted leading-relaxed">
+                    Edit the draft into the version you actually want. The model will
+                    extract concrete lessons and apply them on every future generation.
+                  </p>
+                </div>
+                <SecondaryButton onClick={openRewrite}>
+                  Submit your version
+                </SecondaryButton>
+              </div>
+            )}
+
+            {rewriteOpen && (
+              <div className="space-y-4">
+                <div className="space-y-2">
+                  <div className="flex items-baseline justify-between gap-3">
+                    <Eyebrow>Your rewrite</Eyebrow>
+                    <span className="font-mono text-[11px] text-muted">
+                      {rewriteText
+                        ? rewriteText.split(/\s+/).filter(Boolean).length.toLocaleString()
+                        : 0}{" "}
+                      words
+                    </span>
+                  </div>
+                  <textarea
+                    value={rewriteText}
+                    onChange={(e) => setRewriteText(e.target.value)}
+                    rows={14}
+                    className={textareaClass}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Eyebrow>Optional note</Eyebrow>
+                  <textarea
+                    value={rewriteNote}
+                    onChange={(e) => setRewriteNote(e.target.value)}
+                    placeholder="What did you change and why? Helps the model extract sharper lessons."
+                    rows={3}
+                    className={textareaClass}
+                  />
+                </div>
+                <div className="flex items-center gap-3 flex-wrap">
+                  <AccentButton
+                    onClick={submitRewrite}
+                    disabled={rewriteStatus.state === "submitting" || !rewriteText.trim()}
+                  >
+                    {rewriteStatus.state === "submitting" ? (
+                      <>
+                        <Spinner />
+                        Learning from your edits…
+                      </>
+                    ) : (
+                      "Submit rewrite"
+                    )}
+                  </AccentButton>
+                  <SecondaryButton
+                    onClick={closeRewrite}
+                    disabled={rewriteStatus.state === "submitting"}
+                  >
+                    Cancel
+                  </SecondaryButton>
+                </div>
+                {rewriteStatus.state === "error" && rewriteStatus.message && (
+                  <Banner tone="error">{rewriteStatus.message}</Banner>
+                )}
+              </div>
+            )}
+
+            {rewriteStatus.state === "done" && (
+              <div className="space-y-3">
+                <Banner tone="success">
+                  Learned {rewriteStatus.lessons?.length ?? 0}{" "}
+                  {rewriteStatus.lessons?.length === 1 ? "lesson" : "lessons"} from your
+                  rewrite. The digest has been updated and will apply to your next
+                  generation.
+                </Banner>
+                {rewriteStatus.lessons && rewriteStatus.lessons.length > 0 && (
+                  <Card className="space-y-2">
+                    <Eyebrow>What the model learned</Eyebrow>
+                    <ul className="space-y-1.5 pt-1">
+                      {rewriteStatus.lessons.map((lesson, i) => (
+                        <li
+                          key={i}
+                          className="text-[13.5px] text-foreground/85 leading-relaxed pl-4 relative"
+                        >
+                          <span className="absolute left-0 top-[8px] inline-block h-1 w-1 rounded-full bg-accent" />
+                          {lesson}
+                        </li>
+                      ))}
+                    </ul>
+                    <div className="pt-2">
+                      <Link
+                        href="/voice/corrections"
+                        className="text-[12.5px] text-muted hover:text-foreground underline underline-offset-4"
+                      >
+                        View all corrections →
+                      </Link>
+                    </div>
+                  </Card>
+                )}
+              </div>
+            )}
+          </div>
         </section>
       )}
     </div>

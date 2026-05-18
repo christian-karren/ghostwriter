@@ -50,6 +50,7 @@ const NO_SAMPLES_FALLBACK = `(No voice samples were provided. Write thoughtfully
 export function buildSystemPrompt(
   samples: Sample[],
   profile?: string | null,
+  correctionsDigest?: string | null,
 ): string {
   const sampleSection =
     samples.length === 0
@@ -72,9 +73,20 @@ ${trimmedProfile}
 `
     : "";
 
+  const trimmedDigest = correctionsDigest?.trim();
+  const correctionsSection = trimmedDigest
+    ? `# Personal corrections (from this user's past edits)
+
+This user has rewritten your previous drafts. The lessons below were extracted from those rewrites. They are explicit instructions about what this user wants. Apply them. They override your defaults and refine the voice profile above.
+
+${trimmedDigest}
+
+`
+    : "";
+
   return `${VOICE_INSTRUCTION}
 
-${profileSection}# Voice samples
+${profileSection}${correctionsSection}# Voice samples
 
 ${sampleSection}
 

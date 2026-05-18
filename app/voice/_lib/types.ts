@@ -31,3 +31,19 @@ export type VoiceProfile = {
   generatedAt: number;
   model: string;
 };
+
+export type Correction = {
+  id: string;
+  createdAt: number;
+  request: string;
+  draft: string;
+  rewrite: string;
+  note: string;
+  lessons: string[];
+};
+
+export type CorrectionsLog = {
+  corrections: Correction[];
+  digest: string;
+  digestUpdatedAt: number;
+};

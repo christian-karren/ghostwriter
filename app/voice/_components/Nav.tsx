@@ -7,6 +7,7 @@ import { usePathname } from "next/navigation";
 const TABS = [
   { href: "/voice/generate", label: "Generate" },
   { href: "/voice/samples", label: "Samples" },
+  { href: "/voice/corrections", label: "Corrections" },
   { href: "/voice/settings", label: "Settings" },
 ];
 
