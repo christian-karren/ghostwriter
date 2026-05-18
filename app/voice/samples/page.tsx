@@ -8,7 +8,9 @@ import {
   loadSamples,
   updateSample,
 } from "../_lib/storage";
+import { extractPdfText, isPdfFile } from "../_lib/pdf";
 import {
+  Banner,
   Card,
   Eyebrow,
   FieldLabel,
@@ -28,6 +30,10 @@ export default function SamplesPage() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState("");
   const [editContent, setEditContent] = useState("");
+  const [uploadStatus, setUploadStatus] = useState<{
+    state: "idle" | "processing" | "error" | "warn";
+    message?: string;
+  }>({ state: "idle" });
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -68,14 +74,56 @@ export default function SamplesPage() {
 
   async function handleFileUpload(e: React.ChangeEvent<HTMLInputElement>) {
     const files = e.target.files;
-    if (!files) return;
+    if (!files || files.length === 0) return;
+
+    setUploadStatus({
+      state: "processing",
+      message: `Reading ${files.length} ${files.length === 1 ? "file" : "files"}…`,
+    });
+
+    const errors: string[] = [];
+    const empty: string[] = [];
+    let added = 0;
+
     for (const file of Array.from(files)) {
-      const text = await file.text();
-      const cleanName = file.name.replace(/\.(txt|md|markdown)$/i, "");
-      addSample(cleanName, text);
+      const cleanName = file.name.replace(/\.(pdf|txt|md|markdown)$/i, "");
+      try {
+        let text: string;
+        if (isPdfFile(file)) {
+          text = await extractPdfText(file);
+        } else {
+          text = await file.text();
+        }
+        if (!text.trim()) {
+          empty.push(file.name);
+          continue;
+        }
+        addSample(cleanName, text);
+        added += 1;
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        errors.push(`${file.name}: ${msg}`);
+      }
     }
+
     refresh();
     if (fileInputRef.current) fileInputRef.current.value = "";
+
+    if (errors.length > 0) {
+      setUploadStatus({
+        state: "error",
+        message: `Some files failed. ${errors.join(" | ")}`,
+      });
+    } else if (empty.length > 0) {
+      setUploadStatus({
+        state: "warn",
+        message: `${empty.length} file(s) had no extractable text (probably image-only or scanned PDFs): ${empty.join(", ")}.${
+          added > 0 ? ` ${added} added successfully.` : ""
+        }`,
+      });
+    } else {
+      setUploadStatus({ state: "idle" });
+    }
   }
 
   const totalWords = samples.reduce(
@@ -126,22 +174,42 @@ export default function SamplesPage() {
             />
           </div>
         </div>
-        <div className="flex items-center gap-2 pt-1">
+        <div className="flex items-center gap-2 pt-1 flex-wrap">
           <PrimaryButton onClick={handleAdd} disabled={!content.trim()}>
             Save sample
           </PrimaryButton>
-          <label className="inline-flex items-center justify-center gap-1.5 rounded-full border border-hairline bg-background px-4 py-2 text-[13px] text-foreground/80 cursor-pointer transition-colors hover:border-hairline-strong hover:text-foreground hover:bg-surface">
-            Upload .txt / .md
+          <label
+            className={`inline-flex items-center justify-center gap-1.5 rounded-full border border-hairline bg-background px-4 py-2 text-[13px] text-foreground/80 transition-colors hover:border-hairline-strong hover:text-foreground hover:bg-surface ${
+              uploadStatus.state === "processing"
+                ? "opacity-60 cursor-wait"
+                : "cursor-pointer"
+            }`}
+          >
+            {uploadStatus.state === "processing" ? (
+              <>
+                <UploadSpinner />
+                Processing…
+              </>
+            ) : (
+              <>Upload PDF / .txt / .md</>
+            )}
             <input
               ref={fileInputRef}
               type="file"
-              accept=".txt,.md,.markdown,text/plain,text/markdown"
+              accept=".pdf,.txt,.md,.markdown,application/pdf,text/plain,text/markdown"
               multiple
+              disabled={uploadStatus.state === "processing"}
               onChange={handleFileUpload}
               className="hidden"
             />
           </label>
         </div>
+        {uploadStatus.state === "error" && uploadStatus.message && (
+          <Banner tone="error">{uploadStatus.message}</Banner>
+        )}
+        {uploadStatus.state === "warn" && uploadStatus.message && (
+          <Banner tone="warn">{uploadStatus.message}</Banner>
+        )}
       </Card>
 
       <section className="space-y-4">
@@ -236,5 +304,31 @@ export default function SamplesPage() {
         )}
       </section>
     </div>
+  );
+}
+
+function UploadSpinner() {
+  return (
+    <svg
+      className="animate-spin h-3.5 w-3.5"
+      viewBox="0 0 24 24"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      aria-hidden
+    >
+      <circle
+        className="opacity-25"
+        cx="12"
+        cy="12"
+        r="10"
+        stroke="currentColor"
+        strokeWidth="3"
+      />
+      <path
+        className="opacity-90"
+        fill="currentColor"
+        d="M4 12a8 8 0 018-8v3a5 5 0 00-5 5H4z"
+      />
+    </svg>
   );
 }
