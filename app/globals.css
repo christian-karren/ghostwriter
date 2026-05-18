@@ -4,13 +4,39 @@
 
 :root {
   --background: #ffffff;
-  --foreground: #171717;
+  --foreground: #0f172a;
+  --muted: #64748b;
+  --surface: #fafafa;
+  --hairline: rgba(15, 23, 42, 0.08);
+  --hairline-strong: rgba(15, 23, 42, 0.14);
+  --accent: #10b981;
+  --accent-soft: rgba(16, 185, 129, 0.08);
+  --hero-glow:
+    radial-gradient(
+      ellipse 80% 60% at 50% -10%,
+      rgba(16, 185, 129, 0.18) 0%,
+      rgba(16, 185, 129, 0.06) 35%,
+      transparent 70%
+    );
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
     --background: #0a0a0a;
-    --foreground: #ededed;
+    --foreground: #f5f5f4;
+    --muted: #94a3b8;
+    --surface: #111111;
+    --hairline: rgba(255, 255, 255, 0.08);
+    --hairline-strong: rgba(255, 255, 255, 0.14);
+    --accent: #34d399;
+    --accent-soft: rgba(52, 211, 153, 0.1);
+    --hero-glow:
+      radial-gradient(
+        ellipse 80% 60% at 50% -10%,
+        rgba(52, 211, 153, 0.16) 0%,
+        rgba(52, 211, 153, 0.05) 35%,
+        transparent 70%
+      );
   }
 }
 
@@ -18,4 +44,14 @@ body {
   color: var(--foreground);
   background: var(--background);
   font-family: Arial, Helvetica, sans-serif;
+}
+
+.voice-root {
+  font-family: var(--font-geist-sans), ui-sans-serif, system-ui, -apple-system,
+    "Segoe UI", sans-serif;
+  font-feature-settings: "ss01", "cv01", "cv11";
+}
+
+.voice-hero-bg {
+  background-image: var(--hero-glow);
 }

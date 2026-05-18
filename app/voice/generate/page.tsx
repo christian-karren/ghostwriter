@@ -1,0 +1,393 @@
+"use client";
+
+import Link from "next/link";
+import { useEffect, useMemo, useState } from "react";
+import { HighlightedOutput } from "../_components/HighlightedOutput";
+import {
+  AccentButton,
+  Banner,
+  Card,
+  Eyebrow,
+  FieldLabel,
+  GhostButton,
+  Hint,
+  PageHeader,
+  SecondaryButton,
+  textareaClass,
+} from "../_components/ui";
+import { generateText } from "../_lib/gemini";
+import { buildRetryPrompt, buildSystemPrompt, buildUserPrompt } from "../_lib/prompt";
+import { loadSamples, loadSettings } from "../_lib/storage";
+import { findViolations, summarizeViolations } from "../_lib/styleGuard";
+import type { Sample, Settings, Violation } from "../_lib/types";
+
+type Status =
+  | { state: "idle" }
+  | { state: "generating" }
+  | { state: "retrying" }
+  | { state: "done" }
+  | { state: "error"; message: string };
+
+const LOW_SAMPLE_WORDS = 300;
+const TRUNCATION_REASONS = new Set(["MAX_TOKENS", "LENGTH"]);
+
+export default function GeneratePage() {
+  const [samples, setSamples] = useState<Sample[]>([]);
+  const [settings, setSettings] = useState<Settings | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [request, setRequest] = useState("");
+  const [source, setSource] = useState("");
+  const [status, setStatus] = useState<Status>({ state: "idle" });
+  const [output, setOutput] = useState("");
+  const [violations, setViolations] = useState<Violation[]>([]);
+  const [retried, setRetried] = useState(false);
+  const [truncated, setTruncated] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    const s = loadSamples();
+    setSamples(s);
+    setSelectedIds(new Set(s.map((x) => x.id)));
+    setSettings(loadSettings());
+  }, []);
+
+  const selectedSamples = useMemo(
+    () => samples.filter((s) => selectedIds.has(s.id)),
+    [samples, selectedIds],
+  );
+
+  function toggleSample(id: string) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function selectAll() {
+    setSelectedIds(new Set(samples.map((s) => s.id)));
+  }
+
+  function selectNone() {
+    setSelectedIds(new Set());
+  }
+
+  async function handleGenerate() {
+    if (!settings) return;
+    if (!settings.apiKey) {
+      setStatus({
+        state: "error",
+        message: "No Gemini API key. Add one in Settings.",
+      });
+      return;
+    }
+    if (!request.trim()) {
+      setStatus({ state: "error", message: "Tell the model what to write." });
+      return;
+    }
+
+    setOutput("");
+    setViolations([]);
+    setRetried(false);
+    setTruncated(false);
+    setStatus({ state: "generating" });
+
+    try {
+      const systemPrompt = buildSystemPrompt(selectedSamples);
+      const userPrompt = buildUserPrompt(request, source);
+
+      const first = await generateText({
+        apiKey: settings.apiKey,
+        model: settings.model,
+        systemPrompt,
+        userPrompt,
+        temperature: settings.temperature,
+      });
+
+      const firstViolations = findViolations(first.text);
+
+      if (firstViolations.length === 0) {
+        setOutput(first.text);
+        setViolations([]);
+        setTruncated(TRUNCATION_REASONS.has(first.finishReason));
+        setStatus({ state: "done" });
+        return;
+      }
+
+      setStatus({ state: "retrying" });
+      const retryPrompt = buildRetryPrompt(request, source, first.text, firstViolations);
+      const second = await generateText({
+        apiKey: settings.apiKey,
+        model: settings.model,
+        systemPrompt,
+        userPrompt: retryPrompt,
+        temperature: settings.temperature,
+      });
+
+      const secondViolations = findViolations(second.text);
+
+      const useSecond =
+        secondViolations.length < firstViolations.length &&
+        second.text.length >= first.text.length * 0.7;
+
+      const winner = useSecond ? second : first;
+      const winnerViolations = useSecond ? secondViolations : firstViolations;
+
+      setOutput(winner.text);
+      setViolations(winnerViolations);
+      setRetried(true);
+      setTruncated(TRUNCATION_REASONS.has(winner.finishReason));
+      setStatus({ state: "done" });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setStatus({ state: "error", message });
+    }
+  }
+
+  async function handleCopy() {
+    await navigator.clipboard.writeText(output);
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1200);
+  }
+
+  const hasKey = settings?.apiKey?.length ? true : false;
+  const hasSamples = samples.length > 0;
+  const selectedWordCount = selectedSamples.reduce(
+    (acc, s) => acc + s.content.split(/\s+/).filter(Boolean).length,
+    0,
+  );
+  const lowSampleVolume = hasSamples && selectedWordCount < LOW_SAMPLE_WORDS;
+  const isWorking = status.state === "generating" || status.state === "retrying";
+  const outputWordCount = output
+    ? output.split(/\s+/).filter(Boolean).length
+    : 0;
+
+  return (
+    <div className="pt-14 pb-16 space-y-10">
+      <PageHeader
+        eyebrow="Generate"
+        title="Draft something in your voice"
+        description="Tell the model what to write. It drafts in your voice, flags style violations, and retries once if needed."
+      />
+
+      <div className="space-y-3">
+        {!hasKey && (
+          <Banner tone="error">
+            <span>
+              You need a Gemini API key first.{" "}
+              <Link href="/voice/settings" className="font-medium underline underline-offset-4">
+                Add one in Settings
+              </Link>
+              .
+            </span>
+          </Banner>
+        )}
+        {hasKey && !hasSamples && (
+          <Banner tone="warn">
+            <span>
+              No writing samples yet. The model will fall back to a plain voice.{" "}
+              <Link href="/voice/samples" className="font-medium underline underline-offset-4">
+                Add some samples
+              </Link>{" "}
+              for a real match.
+            </span>
+          </Banner>
+        )}
+        {lowSampleVolume && (
+          <Banner tone="warn">
+            Only {selectedWordCount} words selected across your samples. Voice modeling
+            needs more text to lock in. Aim for {LOW_SAMPLE_WORDS}+ words minimum.
+          </Banner>
+        )}
+      </div>
+
+      <Card className="space-y-5">
+        <div className="space-y-2">
+          <FieldLabel htmlFor="request">What should the model write?</FieldLabel>
+          <textarea
+            id="request"
+            value={request}
+            onChange={(e) => setRequest(e.target.value)}
+            placeholder="A 300-word blog post about why I switched from Vim to Helix..."
+            rows={4}
+            className={textareaClass}
+          />
+        </div>
+
+        <details className="group rounded-xl border border-hairline bg-background overflow-hidden">
+          <summary className="cursor-pointer px-4 py-3 text-[13.5px] font-medium tracking-tight2 select-none flex items-center justify-between hover:bg-surface/50 transition-colors">
+            <span>Source material</span>
+            <span className="text-[11.5px] text-muted font-normal group-open:hidden">
+              Optional
+            </span>
+          </summary>
+          <div className="px-4 pb-4 pt-1 space-y-2 border-t border-hairline">
+            <Hint>Notes, an outline, or a rough draft to rewrite in your voice.</Hint>
+            <textarea
+              value={source}
+              onChange={(e) => setSource(e.target.value)}
+              placeholder="Paste notes or a draft..."
+              rows={6}
+              className={textareaClass}
+            />
+          </div>
+        </details>
+
+        {samples.length > 0 && (
+          <details className="group rounded-xl border border-hairline bg-background overflow-hidden">
+            <summary className="cursor-pointer px-4 py-3 text-[13.5px] font-medium tracking-tight2 select-none flex items-center justify-between hover:bg-surface/50 transition-colors">
+              <span>Voice samples</span>
+              <span className="text-[11.5px] text-muted font-normal">
+                {selectedIds.size} of {samples.length} selected
+              </span>
+            </summary>
+            <div className="px-4 pb-4 pt-3 space-y-3 border-t border-hairline">
+              <div className="flex items-center gap-3">
+                <GhostButton onClick={selectAll}>Select all</GhostButton>
+                <span className="text-muted text-[11px]">·</span>
+                <GhostButton onClick={selectNone}>Select none</GhostButton>
+              </div>
+              <ul className="space-y-1 max-h-64 overflow-y-auto pr-1">
+                {samples.map((s) => (
+                  <li key={s.id}>
+                    <label className="flex items-center gap-2.5 py-1.5 text-[13.5px] cursor-pointer group/item">
+                      <input
+                        type="checkbox"
+                        checked={selectedIds.has(s.id)}
+                        onChange={() => toggleSample(s.id)}
+                        className="h-3.5 w-3.5 accent-[var(--accent)]"
+                      />
+                      <span className="flex-1">{s.name}</span>
+                      <span className="font-mono text-[11px] text-muted">
+                        {s.content.split(/\s+/).filter(Boolean).length} words
+                      </span>
+                    </label>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </details>
+        )}
+
+        <div className="flex items-center gap-3 pt-1">
+          <AccentButton
+            onClick={handleGenerate}
+            disabled={isWorking || !hasKey || !request.trim()}
+          >
+            {status.state === "generating" && (
+              <>
+                <Spinner />
+                Drafting…
+              </>
+            )}
+            {status.state === "retrying" && (
+              <>
+                <Spinner />
+                Fixing style…
+              </>
+            )}
+            {!isWorking && (
+              <>
+                Generate
+                <span aria-hidden className="ml-0.5">→</span>
+              </>
+            )}
+          </AccentButton>
+          {status.state === "error" && (
+            <span className="text-[12.5px] text-red-600 dark:text-red-400">
+              {status.message}
+            </span>
+          )}
+        </div>
+      </Card>
+
+      {output && (
+        <section className="space-y-3">
+          <div className="flex items-baseline justify-between flex-wrap gap-3">
+            <div className="flex items-baseline gap-3">
+              <Eyebrow>Draft</Eyebrow>
+              <span className="font-mono text-[11px] text-muted">
+                {outputWordCount.toLocaleString()} words
+              </span>
+              {retried && (
+                <span className="text-[11.5px] text-muted">auto-retried once</span>
+              )}
+            </div>
+            <div className="flex items-center gap-3">
+              {violations.length > 0 ? (
+                <span className="text-[12px] text-amber-700 dark:text-amber-300">
+                  {summarizeViolations(violations)}
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1.5 text-[12px] text-accent">
+                  <span className="inline-block h-1.5 w-1.5 rounded-full bg-accent" />
+                  Clean
+                </span>
+              )}
+              <SecondaryButton onClick={handleCopy}>
+                {copied ? "Copied" : "Copy"}
+              </SecondaryButton>
+            </div>
+          </div>
+
+          <Card className="bg-background">
+            <div className="text-[15px] leading-[1.65]">
+              <HighlightedOutput text={output} violations={violations} />
+            </div>
+          </Card>
+
+          {truncated && (
+            <Banner tone="warn">
+              The model hit its output limit and the response was cut off mid-thought. Try
+              again, or ask for a shorter piece. If your samples are very long, deselecting
+              some can free up room for output.
+            </Banner>
+          )}
+
+          {violations.length > 0 && (
+            <div className="flex items-center gap-5 text-[11.5px] text-muted pt-1">
+              <LegendDot color="bg-red-500" label="Em dash · colon" />
+              <LegendDot color="bg-yellow-500" label="Long sentence" />
+              <LegendDot color="bg-orange-500" label="Contrastive pattern" />
+            </div>
+          )}
+        </section>
+      )}
+    </div>
+  );
+}
+
+function Spinner() {
+  return (
+    <svg
+      className="animate-spin h-3.5 w-3.5"
+      viewBox="0 0 24 24"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+    >
+      <circle
+        className="opacity-25"
+        cx="12"
+        cy="12"
+        r="10"
+        stroke="currentColor"
+        strokeWidth="3"
+      />
+      <path
+        className="opacity-90"
+        fill="currentColor"
+        d="M4 12a8 8 0 018-8v3a5 5 0 00-5 5H4z"
+      />
+    </svg>
+  );
+}
+
+function LegendDot({ color, label }: { color: string; label: string }) {
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      <span className={`inline-block h-1.5 w-1.5 rounded-full ${color}`} />
+      {label}
+    </span>
+  );
+}
