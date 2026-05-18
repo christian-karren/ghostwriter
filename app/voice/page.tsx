@@ -1,12 +1,10 @@
 import Link from "next/link";
-import { Eyebrow, Card } from "./_components/ui";
 
 export default function VoiceHome() {
   return (
     <div className="pb-8">
       <section className="pt-24 pb-20 flex flex-col items-center text-center">
-        <Eyebrow>Personal writing tool</Eyebrow>
-        <h1 className="mt-5 text-[44px] sm:text-[56px] font-semibold tracking-tight2 leading-[1.02] max-w-3xl">
+        <h1 className="text-[44px] sm:text-[56px] font-semibold tracking-tight2 leading-[1.02] max-w-3xl">
           Write in your own voice,
           <br />
           not an LLM&apos;s.
@@ -57,20 +55,6 @@ export default function VoiceHome() {
           />
         </div>
       </section>
-
-      <section className="pb-24">
-        <Card className="flex flex-col sm:flex-row items-start sm:items-center gap-4 sm:gap-8 bg-gradient-to-br from-surface to-background">
-          <div className="flex-1 space-y-1.5">
-            <Eyebrow>Style rules</Eyebrow>
-            <p className="text-[15px] leading-relaxed text-foreground/85">
-              No em dashes. No colons in prose. No sentence longer than twenty words. None of
-              the &ldquo;It&rsquo;s not X, it&rsquo;s Y&rdquo; structure. The model gets a
-              second chance if the first draft slips, and anything left over gets highlighted
-              for a quick manual fix.
-            </p>
-          </div>
-        </Card>
-      </section>
     </div>
   );
 }
@@ -101,7 +85,7 @@ function FeatureCard({
       </div>
       <h3 className="mt-6 text-[16px] font-medium tracking-tight2">{title}</h3>
       <p className="mt-2 text-[13.5px] leading-relaxed text-muted">{body}</p>
-      <p className="mt-5 text-[12px] text-accent font-medium">{cta}</p>
+      <p className="mt-5 text-[12px] text-foreground/70 font-medium">{cta}</p>
     </Link>
   );
 }
