@@ -17,9 +17,9 @@ import {
 } from "../_components/ui";
 import { generateText } from "../_lib/gemini";
 import { buildRetryPrompt, buildSystemPrompt, buildUserPrompt } from "../_lib/prompt";
-import { loadSamples, loadSettings } from "../_lib/storage";
+import { loadProfile, loadSamples, loadSettings } from "../_lib/storage";
 import { findViolations, summarizeViolations } from "../_lib/styleGuard";
-import type { Sample, Settings, Violation } from "../_lib/types";
+import type { Sample, Settings, VoiceProfile, Violation } from "../_lib/types";
 
 type Status =
   | { state: "idle" }
@@ -34,6 +34,7 @@ const TRUNCATION_REASONS = new Set(["MAX_TOKENS", "LENGTH"]);
 export default function GeneratePage() {
   const [samples, setSamples] = useState<Sample[]>([]);
   const [settings, setSettings] = useState<Settings | null>(null);
+  const [profile, setProfile] = useState<VoiceProfile | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [request, setRequest] = useState("");
   const [source, setSource] = useState("");
@@ -49,6 +50,7 @@ export default function GeneratePage() {
     setSamples(s);
     setSelectedIds(new Set(s.map((x) => x.id)));
     setSettings(loadSettings());
+    setProfile(loadProfile());
   }, []);
 
   const selectedSamples = useMemo(
@@ -94,7 +96,7 @@ export default function GeneratePage() {
     setStatus({ state: "generating" });
 
     try {
-      const systemPrompt = buildSystemPrompt(selectedSamples);
+      const systemPrompt = buildSystemPrompt(selectedSamples, profile?.profile);
       const userPrompt = buildUserPrompt(request, source);
 
       const first = await generateText({
@@ -170,6 +172,37 @@ export default function GeneratePage() {
         title="Draft something in your voice"
         description="Tell the model what to write. It drafts in your voice, flags style violations, and retries once if needed."
       />
+
+      {hasKey && hasSamples && (
+        <div className="flex items-center gap-2 -mt-4 text-[12px]">
+          {profile ? (
+            <>
+              <span className="inline-flex items-center gap-1.5 text-accent">
+                <span className="inline-block h-1.5 w-1.5 rounded-full bg-accent" />
+                Voice profile active
+              </span>
+              <span className="text-muted">·</span>
+              <Link
+                href="/voice/samples"
+                className="text-muted hover:text-foreground underline underline-offset-4"
+              >
+                View on Samples
+              </Link>
+            </>
+          ) : (
+            <>
+              <span className="text-muted">No voice profile extracted yet.</span>
+              <Link
+                href="/voice/samples"
+                className="text-foreground/80 hover:text-foreground underline underline-offset-4 font-medium"
+              >
+                Extract one
+              </Link>
+              <span className="text-muted">for stronger imitation.</span>
+            </>
+          )}
+        </div>
+      )}
 
       <div className="space-y-3">
         {!hasKey && (

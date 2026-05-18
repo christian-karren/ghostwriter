@@ -1,14 +1,23 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import type { Sample } from "../_lib/types";
+import type { Sample, Settings, VoiceProfile } from "../_lib/types";
 import {
   addSample,
+  clearProfile,
   deleteSample,
+  loadProfile,
   loadSamples,
+  loadSettings,
+  saveProfile,
   updateSample,
 } from "../_lib/storage";
 import { extractPdfText, isPdfFile } from "../_lib/pdf";
+import {
+  extractVoiceProfile,
+  formatRelativeTime,
+  isProfileStale,
+} from "../_lib/profile";
 import {
   Banner,
   Card,
@@ -25,6 +34,8 @@ import {
 
 export default function SamplesPage() {
   const [samples, setSamples] = useState<Sample[]>([]);
+  const [settings, setSettings] = useState<Settings | null>(null);
+  const [profile, setProfile] = useState<VoiceProfile | null>(null);
   const [name, setName] = useState("");
   const [content, setContent] = useState("");
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -35,16 +46,61 @@ export default function SamplesPage() {
     message?: string;
   }>({ state: "idle" });
   const [dragDepth, setDragDepth] = useState(0);
+  const [profileStatus, setProfileStatus] = useState<{
+    state: "idle" | "extracting" | "error";
+    message?: string;
+  }>({ state: "idle" });
   const fileInputRef = useRef<HTMLInputElement>(null);
   const isDragging = dragDepth > 0;
   const isProcessing = uploadStatus.state === "processing";
+  const isExtractingProfile = profileStatus.state === "extracting";
 
   useEffect(() => {
     setSamples(loadSamples());
+    setSettings(loadSettings());
+    setProfile(loadProfile());
   }, []);
 
   function refresh() {
     setSamples(loadSamples());
+  }
+
+  async function handleExtractProfile() {
+    if (!settings?.apiKey) {
+      setProfileStatus({
+        state: "error",
+        message: "Add your Gemini API key in Settings first.",
+      });
+      return;
+    }
+    if (samples.length === 0) {
+      setProfileStatus({
+        state: "error",
+        message: "Add at least one writing sample before extracting a profile.",
+      });
+      return;
+    }
+    setProfileStatus({ state: "extracting" });
+    try {
+      const next = await extractVoiceProfile({
+        apiKey: settings.apiKey,
+        model: settings.model,
+        samples,
+      });
+      saveProfile(next);
+      setProfile(next);
+      setProfileStatus({ state: "idle" });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setProfileStatus({ state: "error", message });
+    }
+  }
+
+  function handleClearProfile() {
+    if (!confirm("Clear the voice profile? You can regenerate it later.")) return;
+    clearProfile();
+    setProfile(null);
+    setProfileStatus({ state: "idle" });
   }
 
   function handleAdd() {
@@ -171,6 +227,10 @@ export default function SamplesPage() {
     ? content.trim().split(/\s+/).filter(Boolean).length
     : 0;
 
+  const profileStale =
+    profile && samples.length > 0 && isProfileStale(profile, samples);
+  const hasKey = !!settings?.apiKey;
+
   return (
     <div className="pt-14 pb-16 space-y-12">
       <PageHeader
@@ -178,6 +238,89 @@ export default function SamplesPage() {
         title="Your writing library"
         description="Anything you have written that sounds like you. The more you add, the better the voice match. Aim for a few thousand words across multiple pieces."
       />
+
+      <section className="space-y-3">
+        <div className="flex items-baseline justify-between gap-4">
+          <div className="space-y-1">
+            <Eyebrow>Voice profile</Eyebrow>
+            <p className="text-[13px] text-muted leading-relaxed max-w-prose">
+              A distilled description of your voice, extracted from your samples by the
+              same model that will later imitate you. Injected at the top of every
+              generation so the model has an explicit guide, not just raw examples.
+            </p>
+          </div>
+          {profile && (
+            <span className="font-mono text-[11px] text-muted shrink-0">
+              {formatRelativeTime(profile.generatedAt)}
+            </span>
+          )}
+        </div>
+        <Card className="space-y-4">
+          {!profile && (
+            <div className="space-y-3">
+              <p className="text-[13.5px] text-muted leading-relaxed">
+                {samples.length === 0
+                  ? "Add at least one writing sample below, then extract a profile."
+                  : !hasKey
+                    ? "Add your Gemini API key in Settings, then come back to extract."
+                    : "No profile yet. Click to analyze your samples and build one."}
+              </p>
+              <PrimaryButton
+                onClick={handleExtractProfile}
+                disabled={
+                  isExtractingProfile || !hasKey || samples.length === 0
+                }
+              >
+                {isExtractingProfile ? (
+                  <>
+                    <ProfileSpinner />
+                    Analyzing samples…
+                  </>
+                ) : (
+                  "Extract voice profile"
+                )}
+              </PrimaryButton>
+            </div>
+          )}
+          {profile && (
+            <div className="space-y-4">
+              {profileStale && (
+                <Banner tone="warn">
+                  Your samples have changed since this profile was extracted. Regenerate
+                  for a refreshed read on your voice.
+                </Banner>
+              )}
+              <p className="text-[14.5px] leading-relaxed whitespace-pre-wrap text-foreground/90">
+                {profile.profile}
+              </p>
+              <div className="flex items-center gap-2 pt-1 flex-wrap">
+                <SecondaryButton
+                  onClick={handleExtractProfile}
+                  disabled={isExtractingProfile || !hasKey || samples.length === 0}
+                >
+                  {isExtractingProfile ? (
+                    <>
+                      <ProfileSpinner />
+                      Regenerating…
+                    </>
+                  ) : (
+                    "Regenerate"
+                  )}
+                </SecondaryButton>
+                <GhostButton
+                  onClick={handleClearProfile}
+                  disabled={isExtractingProfile}
+                >
+                  Clear
+                </GhostButton>
+              </div>
+            </div>
+          )}
+          {profileStatus.state === "error" && profileStatus.message && (
+            <Banner tone="error">{profileStatus.message}</Banner>
+          )}
+        </Card>
+      </section>
 
       <section className="space-y-3">
         <label
@@ -411,6 +554,32 @@ function UploadIcon() {
       <path d="M12 16V4" />
       <path d="m7 9 5-5 5 5" />
       <path d="M5 16v2a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-2" />
+    </svg>
+  );
+}
+
+function ProfileSpinner() {
+  return (
+    <svg
+      className="animate-spin h-3.5 w-3.5"
+      viewBox="0 0 24 24"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      aria-hidden
+    >
+      <circle
+        className="opacity-25"
+        cx="12"
+        cy="12"
+        r="10"
+        stroke="currentColor"
+        strokeWidth="3"
+      />
+      <path
+        className="opacity-90"
+        fill="currentColor"
+        d="M4 12a8 8 0 018-8v3a5 5 0 00-5 5H4z"
+      />
     </svg>
   );
 }

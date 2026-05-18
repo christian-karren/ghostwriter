@@ -26,7 +26,10 @@ If you find yourself writing many short, identical-rhythm sentences in a row, th
 
 const NO_SAMPLES_FALLBACK = `(No voice samples were provided. Write thoughtfully and with personality. Avoid sounding like a typical AI assistant.)`;
 
-export function buildSystemPrompt(samples: Sample[]): string {
+export function buildSystemPrompt(
+  samples: Sample[],
+  profile?: string | null,
+): string {
   const sampleSection =
     samples.length === 0
       ? NO_SAMPLES_FALLBACK
@@ -37,9 +40,20 @@ export function buildSystemPrompt(samples: Sample[]): string {
           )
           .join("\n\n---\n\n");
 
+  const trimmedProfile = profile?.trim();
+  const profileSection = trimmedProfile
+    ? `# Voice profile
+
+This is a distilled description of the writer's voice, extracted from their samples. Treat it as your primary guide. The raw samples below are supporting evidence.
+
+${trimmedProfile}
+
+`
+    : "";
+
   return `${VOICE_INSTRUCTION}
 
-# Voice samples
+${profileSection}# Voice samples
 
 ${sampleSection}
 

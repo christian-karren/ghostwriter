@@ -1,9 +1,10 @@
 "use client";
 
-import type { Sample, Settings } from "./types";
+import type { Sample, Settings, VoiceProfile } from "./types";
 
 const SAMPLES_KEY = "voice.samples.v1";
 const SETTINGS_KEY = "voice.settings.v1";
+const PROFILE_KEY = "voice.profile.v1";
 
 const DEFAULT_SETTINGS: Settings = {
   apiKey: "",
@@ -74,4 +75,27 @@ export function loadSettings(): Settings {
 export function saveSettings(settings: Settings): void {
   if (!isBrowser()) return;
   window.localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+}
+
+export function loadProfile(): VoiceProfile | null {
+  if (!isBrowser()) return null;
+  try {
+    const raw = window.localStorage.getItem(PROFILE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as VoiceProfile;
+    if (typeof parsed.profile !== "string") return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+export function saveProfile(profile: VoiceProfile): void {
+  if (!isBrowser()) return;
+  window.localStorage.setItem(PROFILE_KEY, JSON.stringify(profile));
+}
+
+export function clearProfile(): void {
+  if (!isBrowser()) return;
+  window.localStorage.removeItem(PROFILE_KEY);
 }

@@ -24,3 +24,10 @@ export type GenerationResult = {
   violations: Violation[];
   retried: boolean;
 };
+
+export type VoiceProfile = {
+  profile: string;
+  sampleIds: string[];
+  generatedAt: number;
+  model: string;
+};
