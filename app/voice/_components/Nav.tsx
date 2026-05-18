@@ -18,12 +18,12 @@ export function Nav() {
       <div className="max-w-5xl mx-auto px-6 h-16 flex items-center justify-between">
         <Link href="/voice" className="flex items-center gap-2.5">
           <Image
-            src="/ghostwriter-logo.jpeg"
+            src="/ghostwriter.png"
             alt="Ghostwriter"
-            width={36}
-            height={36}
+            width={40}
+            height={40}
             priority
-            className="h-9 w-9 object-contain mix-blend-multiply dark:mix-blend-screen"
+            className="h-10 w-10 object-contain"
           />
           <span className="font-wordmark text-[20px] leading-none tracking-[0.04em] text-foreground/90">
             GHOSTWRITER
