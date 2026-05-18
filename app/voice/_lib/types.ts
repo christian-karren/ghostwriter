@@ -13,7 +13,7 @@ export type Settings = {
 };
 
 export type Violation = {
-  kind: "em-dash" | "colon" | "long-sentence" | "contrastive";
+  kind: "em-dash" | "colon" | "long-sentence" | "contrastive" | "pronoun-stack";
   start: number;
   end: number;
   message: string;

@@ -1,6 +1,9 @@
 import type { Violation } from "./types";
 
 export const MAX_SENTENCE_WORDS = 20;
+export const MAX_CONSECUTIVE_PRONOUN_OPENERS = 2;
+
+const PRONOUN_OPENER = /^(it'?s?|its|they|their|them|these|this|that|those|he|she|him|her|his|hers)\b/i;
 
 export function findViolations(text: string): Violation[] {
   const violations: Violation[] = [];
@@ -55,7 +58,51 @@ export function findViolations(text: string): Violation[] {
     }
   }
 
+  for (const stack of findPronounStacks(text)) {
+    violations.push(stack);
+  }
+
   return mergeOverlapping(violations.sort((a, b) => a.start - b.start));
+}
+
+function findPronounStacks(text: string): Violation[] {
+  const sentences = splitSentences(text);
+  const violations: Violation[] = [];
+  let runStart = -1;
+  let runLength = 0;
+  let runEnd = -1;
+
+  for (let i = 0; i < sentences.length; i++) {
+    const trimmed = sentences[i].text.trim();
+    if (PRONOUN_OPENER.test(trimmed)) {
+      if (runLength === 0) runStart = sentences[i].start;
+      runLength += 1;
+      runEnd = sentences[i].end;
+    } else {
+      if (runLength > MAX_CONSECUTIVE_PRONOUN_OPENERS) {
+        violations.push({
+          kind: "pronoun-stack",
+          start: runStart,
+          end: runEnd,
+          message: `${runLength} sentences in a row start with a pronoun`,
+        });
+      }
+      runLength = 0;
+      runStart = -1;
+      runEnd = -1;
+    }
+  }
+
+  if (runLength > MAX_CONSECUTIVE_PRONOUN_OPENERS) {
+    violations.push({
+      kind: "pronoun-stack",
+      start: runStart,
+      end: runEnd,
+      message: `${runLength} sentences in a row start with a pronoun`,
+    });
+  }
+
+  return violations;
 }
 
 type SentenceSpan = { text: string; start: number; end: number };
@@ -97,5 +144,6 @@ export function summarizeViolations(violations: Violation[]): string {
   if (counts.get("colon")) parts.push(`${counts.get("colon")} colon(s)`);
   if (counts.get("long-sentence")) parts.push(`${counts.get("long-sentence")} long sentence(s)`);
   if (counts.get("contrastive")) parts.push(`${counts.get("contrastive")} contrastive pattern(s)`);
+  if (counts.get("pronoun-stack")) parts.push(`${counts.get("pronoun-stack")} pronoun-stacked passage(s)`);
   return parts.join(", ");
 }

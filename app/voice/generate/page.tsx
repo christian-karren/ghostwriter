@@ -379,10 +379,11 @@ export default function GeneratePage() {
           )}
 
           {violations.length > 0 && (
-            <div className="flex items-center gap-5 text-[11.5px] text-muted pt-1">
+            <div className="flex items-center gap-5 text-[11.5px] text-muted pt-1 flex-wrap">
               <LegendDot color="bg-red-500" label="Em dash · colon" />
               <LegendDot color="bg-yellow-500" label="Long sentence" />
               <LegendDot color="bg-orange-500" label="Contrastive pattern" />
+              <LegendDot color="bg-purple-500" label="Pronoun stack" />
             </div>
           )}
         </section>

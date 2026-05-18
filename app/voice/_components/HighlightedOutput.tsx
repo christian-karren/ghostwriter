@@ -7,6 +7,7 @@ const KIND_STYLES: Record<Violation["kind"], string> = {
   "colon": "bg-red-500/25 underline decoration-red-500 decoration-2",
   "long-sentence": "bg-yellow-400/20 underline decoration-yellow-500 decoration-wavy",
   "contrastive": "bg-orange-500/25 underline decoration-orange-500 decoration-wavy",
+  "pronoun-stack": "bg-purple-500/15 underline decoration-purple-500 decoration-wavy",
 };
 
 export function HighlightedOutput({
