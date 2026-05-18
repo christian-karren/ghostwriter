@@ -1,28 +1,33 @@
 import type { Sample, Violation } from "./types";
 import { MAX_SENTENCE_WORDS } from "./styleGuard";
 
-const VOICE_INSTRUCTION = `You are the author of the writing samples below. Read them closely. Notice the rhythm, the vocabulary, the kind of openings the author chooses, the way they build paragraphs, the way they handle transitions, the level of formality, the small idiosyncrasies. When you write the user's request, write as if you are the same person. Do not write as a generic assistant.`;
+const VOICE_INSTRUCTION = `You are writing as the author whose voice is described and shown below. Your primary objective is voice match. A careful reader of the samples should be able to attribute your output to the same author.
+
+Everything else in this prompt is secondary to voice match. The style constraints further down exist to remove four specific patterns that read as AI-generated. They do NOT exist to flatten your output into short, choppy, ESL-sounding sentences. If your draft reads like a string of 7 to 10 word declaratives, you have failed even if every rule is technically followed.`;
 
 const TASK_INSTRUCTION = `# Your task
 
 The user will tell you what to write. Pay attention to every part of their request.
 
-- If they ask for a specific length (300 words, 800 words, "long", etc), hit it. Do not stop short.
-- If they list multiple topics, cover all of them. Do not stop after the first one.
-- If they specify a format (essay, blog post, list), respect it.
+- LENGTH. If they ask for a specific length (300 words, 800 words, "long"), hit within 10 percent of that target. If they ask for 800, write 780 to 850. Count your words. Do not stop short.
+- TOPICS. If they list multiple topics, cover ALL of them in roughly equal depth. Do not stop after the first one.
+- FORMAT. If they specify a format (essay, blog post, list), respect it.
 
-Output only the requested prose itself. No preamble. No "Here is...". No meta-commentary. No headers unless the user asked for headers. Just the writing.`;
+Output only the prose itself. No preamble. No "Here is...". No meta-commentary. No headers unless the user asked for headers. Just the writing.`;
 
-const STYLE_RULES = `# Style constraints (absolute, no exceptions)
+const STYLE_RULES = `# Style constraints (apply within the voice, not over it)
 
-These four constraints override any default writing instinct. They are non-negotiable, but they should not push you into a choppy, robotic, listicle voice. Keep the author's natural flow within these limits.
+Four constraints must hold. These apply WITHIN the voice you are imitating. The voice profile is your primary guide. These constraints just remove four patterns that read as AI-generated.
 
-1. NEVER use em dashes (—) or en dashes (–). Use periods, commas, or parentheses instead.
-2. NEVER use colons (:) in prose. Restructure the sentence to avoid them.
-3. Keep every sentence to ${MAX_SENTENCE_WORDS} words or fewer. Count before committing. Split longer sentences.
-4. NEVER use "It's not X, it's Y" or "Not just X, but Y" or any close variant. This includes "It isn't X. It's Y", "Not only X but also Y", "This isn't X, it's Y", "Rather than X, it's Y". If you want to contrast two ideas, find a different way to phrase it.
+1. NEVER use em dashes (—) or en dashes (–). If the writer uses them in their samples (most thoughtful writers do), substitute commas, periods, or parentheses while preserving the original rhythm. Do not collapse a single complex sentence into two short ones just to avoid an em dash.
 
-If you find yourself writing many short, identical-rhythm sentences in a row, that is the wrong fix. Vary your sentence structure. Use compound sentences with commas. Use questions. Use sentence fragments occasionally if the author does. Match the author's pace, just without the banned patterns.`;
+2. NEVER use colons (:) in prose. Restructure to avoid them. Semicolons are fine when the writer's voice uses them.
+
+3. Keep every sentence to ${MAX_SENTENCE_WORDS} words or fewer. CRITICAL CLARIFICATION. ${MAX_SENTENCE_WORDS} is a cap, not a target. Do NOT default to writing 5 to 10 word sentences. Use the full range. When the voice profile shows a writer who favors complex sentences, lean into the upper half. Many sentences should land in the 14 to 19 word band. Vary rhythm aggressively. A long string of identical-length declaratives is the failure mode this entire system is designed to avoid.
+
+4. NEVER use "It's not X, it's Y" or "Not just X, but Y" or any close variant. This includes "It isn't X. It's Y", "Not only X but also Y", "This isn't X, it's Y", "Rather than X, it's Y". Contrast ideas through plain phrasing instead.
+
+If you find yourself stacking short identical-rhythm sentences, stop and rewrite. Vary structure. Use compound sentences with commas. Use parentheticals. Use rhetorical questions if the writer does. Match the writer's pace and complexity within the ${MAX_SENTENCE_WORDS}-word cap.`;
 
 const NO_SAMPLES_FALLBACK = `(No voice samples were provided. Write thoughtfully and with personality. Avoid sounding like a typical AI assistant.)`;
 
