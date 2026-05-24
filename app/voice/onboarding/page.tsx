@@ -9,44 +9,83 @@ import { addSample, saveSettings } from "../_lib/storage";
 import { useData } from "../_lib/DataProvider";
 
 const WELCOME_AUTO_ADVANCE_MS = 3000;
+const FADE_MS = 160;
 
 type Step = "welcome" | "samples" | "apiKey";
+
+function wait(ms: number) {
+  return new Promise<void>((resolve) => window.setTimeout(resolve, ms));
+}
 
 export default function OnboardingPage() {
   const router = useRouter();
   const { settings, refreshSamples, refreshSettings } = useData();
   const [step, setStep] = useState<Step>("welcome");
+  const [visible, setVisible] = useState(false);
+
+  useEffect(() => {
+    const t = window.setTimeout(() => setVisible(true), 20);
+    return () => window.clearTimeout(t);
+  }, []);
+
+  async function transitionTo(next: Step) {
+    setVisible(false);
+    await wait(FADE_MS);
+    setStep(next);
+    await wait(20);
+    setVisible(true);
+  }
+
+  async function fadeOutAndNavigate(href: string) {
+    setVisible(false);
+    await wait(FADE_MS);
+    router.replace(href);
+  }
 
   async function finish() {
     await saveSettings({ ...settings, onboardingComplete: true });
     await refreshSettings();
-    router.replace("/voice/generate");
+    await fadeOutAndNavigate("/voice/generate");
   }
 
-  if (step === "welcome") {
-    return <WelcomeStep onAdvance={() => setStep("samples")} />;
-  }
-  if (step === "samples") {
+  const content = (() => {
+    if (step === "welcome") {
+      return <WelcomeStep onAdvance={() => transitionTo("samples")} />;
+    }
+    if (step === "samples") {
+      return (
+        <SamplesStep
+          onUploaded={async () => {
+            await refreshSamples();
+            await transitionTo("apiKey");
+          }}
+          onSkip={() => transitionTo("apiKey")}
+        />
+      );
+    }
     return (
-      <SamplesStep
-        onUploaded={async () => {
-          await refreshSamples();
-          setStep("apiKey");
+      <ApiKeyStep
+        currentKey={settings.apiKey}
+        onContinue={async (key) => {
+          await saveSettings({ ...settings, apiKey: key, onboardingComplete: true });
+          await refreshSettings();
+          await fadeOutAndNavigate("/voice/generate");
         }}
-        onSkip={() => setStep("apiKey")}
+        onSkip={finish}
       />
     );
-  }
+  })();
+
   return (
-    <ApiKeyStep
-      currentKey={settings.apiKey}
-      onContinue={async (key) => {
-        await saveSettings({ ...settings, apiKey: key, onboardingComplete: true });
-        await refreshSettings();
-        router.replace("/voice/generate");
+    <div
+      className="fixed inset-0 transition-opacity ease-out"
+      style={{
+        opacity: visible ? 1 : 0,
+        transitionDuration: `${FADE_MS}ms`,
       }}
-      onSkip={finish}
-    />
+    >
+      {content}
+    </div>
   );
 }
 
