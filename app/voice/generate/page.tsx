@@ -1,24 +1,31 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import {
   AccentButton,
   Banner,
   Card,
   Eyebrow,
-  FieldLabel,
-  GhostButton,
-  Hint,
   PageHeader,
   SecondaryButton,
   textareaClass,
 } from "../_components/ui";
 import { DEFAULT_MODEL, generateText } from "../_lib/gemini";
-import { buildRetryPrompt, buildSystemPrompt, buildUserPrompt } from "../_lib/prompt";
-import { archiveGeneration, hydrateSamples } from "../_lib/storage";
+import {
+  buildRetryPrompt,
+  buildSystemPrompt,
+  buildUserPrompt,
+} from "../_lib/prompt";
+import {
+  archiveGeneration,
+  deleteGeneration,
+  hydrateSamples,
+  readGeneration,
+} from "../_lib/storage";
 import { recordCorrection } from "../_lib/corrections";
+import { extractPdfText, isPdfFile } from "../_lib/pdf";
 import {
   checkLength,
   findViolations,
@@ -27,7 +34,13 @@ import {
   type LengthFeedback,
 } from "../_lib/styleGuard";
 import { useData } from "../_lib/DataProvider";
-import type { Sample, Violation } from "../_lib/types";
+import { formatRelativeTime } from "../_lib/profile";
+import type {
+  GenerationFull,
+  LastDraft,
+  Sample,
+  Violation,
+} from "../_lib/types";
 
 type Status =
   | { state: "idle" }
@@ -35,9 +48,31 @@ type Status =
   | { state: "done" }
   | { state: "error"; message: string };
 
+type UploadStatus =
+  | { state: "idle" }
+  | { state: "processing"; message: string }
+  | { state: "error"; message: string };
+
+type AttachedFile = {
+  id: string;
+  name: string;
+  text: string;
+};
+
+type OverlaySource =
+  | { kind: "latest"; draft: LastDraft }
+  | { kind: "historical"; generation: GenerationFull };
+
 const LOW_SAMPLE_WORDS = 300;
 const TRUNCATION_REASONS = new Set(["MAX_TOKENS", "LENGTH"]);
 const MAX_ATTEMPTS = 5;
+
+const PROMPT_PLACEHOLDERS = [
+  "Write an essay about Moby Dick…",
+  "Write a technical article about context in agent harnesses…",
+  "Write a newsletter on behalf of my non-profit…",
+];
+const PLACEHOLDER_INTERVAL_MS = 5000;
 
 type Attempt = {
   text: string;
@@ -48,7 +83,8 @@ type Attempt = {
 };
 
 function attemptScore(a: Attempt): number {
-  const lengthPenalty = a.length && a.length.status !== "ok" ? Math.min(a.length.delta, 500) : 0;
+  const lengthPenalty =
+    a.length && a.length.status !== "ok" ? Math.min(a.length.delta, 500) : 0;
   return a.violations.length * 100 + lengthPenalty;
 }
 
@@ -58,18 +94,30 @@ export default function GeneratePage() {
     settings,
     profile,
     corrections,
+    generations,
+    lastDraft,
+    setLastDraft,
     refreshCorrections,
+    refreshGenerations,
   } = useData();
 
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set(samples.map((s) => s.id)));
   const [request, setRequest] = useState("");
-  const [source, setSource] = useState("");
+  const [placeholderIndex, setPlaceholderIndex] = useState(0);
+  const [placeholderPhase, setPlaceholderPhase] = useState<
+    "idle" | "exiting" | "entering"
+  >("idle");
+  const [requestFocused, setRequestFocused] = useState(false);
   const [status, setStatus] = useState<Status>({ state: "idle" });
-  const [output, setOutput] = useState("");
-  const [lastRequest, setLastRequest] = useState("");
-  const [lastSource, setLastSource] = useState("");
-  const [attemptsUsed, setAttemptsUsed] = useState(0);
-  const [truncated, setTruncated] = useState(false);
+  const [attachments, setAttachments] = useState<AttachedFile[]>([]);
+  const [uploadStatus, setUploadStatus] = useState<UploadStatus>({
+    state: "idle",
+  });
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Overlay state
+  const [overlayId, setOverlayId] = useState<null | "latest" | string>(null);
+  const [overlaySource, setOverlaySource] = useState<OverlaySource | null>(null);
+  const [overlayLoading, setOverlayLoading] = useState(false);
   const [copied, setCopied] = useState(false);
   const [rewriteOpen, setRewriteOpen] = useState(false);
   const [rewriteText, setRewriteText] = useState("");
@@ -80,26 +128,133 @@ export default function GeneratePage() {
     lessons?: string[];
   }>({ state: "idle" });
 
-  const selectedMetas = useMemo(
-    () => samples.filter((s) => selectedIds.has(s.id)),
-    [samples, selectedIds],
-  );
+  useEffect(() => {
+    if (request.length > 0 || requestFocused) {
+      setPlaceholderPhase("idle");
+      return;
+    }
+    const timers: number[] = [];
+    const intervalId = window.setInterval(() => {
+      setPlaceholderPhase("exiting");
+      timers.push(
+        window.setTimeout(() => {
+          setPlaceholderIndex((i) => (i + 1) % PROMPT_PLACEHOLDERS.length);
+          setPlaceholderPhase("entering");
+          timers.push(
+            window.setTimeout(() => {
+              setPlaceholderPhase("idle");
+            }, 30),
+          );
+        }, 260),
+      );
+    }, PLACEHOLDER_INTERVAL_MS);
+    return () => {
+      window.clearInterval(intervalId);
+      timers.forEach((t) => window.clearTimeout(t));
+      setPlaceholderPhase("idle");
+    };
+  }, [request, requestFocused]);
 
-  function toggleSample(id: string) {
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
+  // Resolve overlay content when id changes
+  useEffect(() => {
+    if (overlayId === null) {
+      setOverlaySource(null);
+      return;
+    }
+    if (overlayId === "latest") {
+      if (lastDraft) {
+        setOverlaySource({ kind: "latest", draft: lastDraft });
+      }
+      return;
+    }
+    let cancelled = false;
+    setOverlayLoading(true);
+    readGeneration(overlayId)
+      .then((gen) => {
+        if (cancelled) return;
+        setOverlaySource({ kind: "historical", generation: gen });
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        console.error("read generation failed", err);
+        setOverlaySource(null);
+      })
+      .finally(() => {
+        if (!cancelled) setOverlayLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [overlayId, lastDraft]);
+
+  function resetOverlayState() {
+    setCopied(false);
+    setRewriteOpen(false);
+    setRewriteText("");
+    setRewriteNote("");
+    setRewriteStatus({ state: "idle" });
+  }
+
+  function closeOverlay() {
+    setOverlayId(null);
+    setOverlaySource(null);
+    resetOverlayState();
+  }
+
+  function openHistory(id: string) {
+    resetOverlayState();
+    setOverlayId(id);
+  }
+
+  async function handleUploadFiles(fileList: FileList | File[]) {
+    const list = Array.from(fileList);
+    if (list.length === 0) return;
+    setUploadStatus({
+      state: "processing",
+      message: `Reading ${list.length} ${list.length === 1 ? "file" : "files"}…`,
     });
+
+    const errors: string[] = [];
+    const next: AttachedFile[] = [];
+    for (const file of list) {
+      try {
+        const cleanName = file.name.replace(/\.(pdf|txt|md|markdown)$/i, "");
+        let text: string;
+        if (isPdfFile(file)) {
+          text = await extractPdfText(file);
+        } else {
+          text = await file.text();
+        }
+        if (!text.trim()) {
+          errors.push(`${file.name}: empty`);
+          continue;
+        }
+        next.push({
+          id: crypto.randomUUID(),
+          name: cleanName,
+          text,
+        });
+      } catch (err) {
+        errors.push(
+          `${file.name}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
+
+    if (fileInputRef.current) fileInputRef.current.value = "";
+
+    if (next.length > 0) {
+      setAttachments((prev) => [...prev, ...next]);
+      setUploadStatus({ state: "idle" });
+    } else if (errors.length > 0) {
+      setUploadStatus({ state: "error", message: errors.join(" | ") });
+    } else {
+      setUploadStatus({ state: "idle" });
+    }
   }
 
-  function selectAll() {
-    setSelectedIds(new Set(samples.map((s) => s.id)));
-  }
-
-  function selectNone() {
-    setSelectedIds(new Set());
+  function removeAttachment(id: string) {
+    setAttachments((prev) => prev.filter((a) => a.id !== id));
   }
 
   async function handleGenerate() {
@@ -115,34 +270,34 @@ export default function GeneratePage() {
       return;
     }
 
-    setOutput("");
-    setAttemptsUsed(0);
-    setTruncated(false);
-    setRewriteOpen(false);
-    setRewriteText("");
-    setRewriteNote("");
-    setRewriteStatus({ state: "idle" });
     setStatus({ state: "generating", attempt: 1 });
 
     const startedAt = performance.now();
     const target = parseTargetWordCount(request);
+    const sourceMaterial =
+      attachments.length > 0
+        ? attachments
+            .map((a) => `## ${a.name}\n\n${a.text.trim()}`)
+            .join("\n\n---\n\n")
+        : "";
 
     try {
-      const fullSamples: Sample[] = await hydrateSamples(selectedMetas);
+      const fullSamples: Sample[] = await hydrateSamples(samples);
 
       const systemPrompt = buildSystemPrompt(
         fullSamples,
         profile?.profile,
         corrections.digest,
       );
-      const userPrompt = buildUserPrompt(request, source);
-      setLastRequest(request);
-      setLastSource(source);
+      const userPrompt = buildUserPrompt(request, sourceMaterial);
 
       const allAttempts: Attempt[] = [];
       let best: Attempt | null = null;
 
-      async function runOnce(promptText: string, attempt: number): Promise<Attempt> {
+      async function runOnce(
+        promptText: string,
+        attempt: number,
+      ): Promise<Attempt> {
         setStatus({ state: "generating", attempt });
         const result = await generateText({
           apiKey: settings.apiKey,
@@ -169,12 +324,13 @@ export default function GeneratePage() {
       let attemptNum = 1;
       while (
         attemptNum < MAX_ATTEMPTS &&
-        (best.violations.length > 0 || (best.length && best.length.status !== "ok"))
+        (best.violations.length > 0 ||
+          (best.length && best.length.status !== "ok"))
       ) {
         attemptNum += 1;
         const retryPrompt = buildRetryPrompt(
           request,
-          source,
+          sourceMaterial,
           best.text,
           best.violations,
           best.length,
@@ -187,33 +343,53 @@ export default function GeneratePage() {
       }
 
       const elapsed = Math.round(performance.now() - startedAt);
+      const finalText = best.scrubbed;
+      const attemptsUsed = allAttempts.length;
+      const truncated = TRUNCATION_REASONS.has(best.finishReason);
 
-      setOutput(best.scrubbed);
-      setAttemptsUsed(allAttempts.length);
-      setTruncated(TRUNCATION_REASONS.has(best.finishReason));
-      setStatus({ state: "done" });
+      let archivedId: string | null = null;
+      try {
+        archivedId = await archiveGeneration({
+          request,
+          source: sourceMaterial || undefined,
+          systemPrompt,
+          draftV1: allAttempts[0].text,
+          violationsV1: allAttempts[0].violations,
+          draftV2:
+            allAttempts.length > 1
+              ? allAttempts[allAttempts.length - 1].text
+              : undefined,
+          violationsV2:
+            allAttempts.length > 1
+              ? allAttempts[allAttempts.length - 1].violations
+              : undefined,
+          finalText,
+          meta: {
+            model: DEFAULT_MODEL,
+            temperature: settings.temperature,
+            finishReason: best.finishReason,
+            ms: elapsed,
+            accepted: false,
+            retried: allAttempts.length > 1,
+          },
+        });
+      } catch (err) {
+        console.error("archive failed", err);
+      }
 
-      archiveGeneration({
+      const draft: LastDraft = {
+        archivedId,
         request,
-        source,
-        systemPrompt,
-        draftV1: allAttempts[0].text,
-        violationsV1: allAttempts[0].violations,
-        draftV2: allAttempts.length > 1 ? allAttempts[allAttempts.length - 1].text : undefined,
-        violationsV2:
-          allAttempts.length > 1
-            ? allAttempts[allAttempts.length - 1].violations
-            : undefined,
-        finalText: best.scrubbed,
-        meta: {
-          model: DEFAULT_MODEL,
-          temperature: settings.temperature,
-          finishReason: best.finishReason,
-          ms: elapsed,
-          accepted: false,
-          retried: allAttempts.length > 1,
-        },
-      }).catch((err) => console.error("archive failed", err));
+        output: finalText,
+        attemptsUsed,
+        truncated,
+        finishedAt: Date.now(),
+      };
+      setLastDraft(draft);
+      setStatus({ state: "done" });
+      resetOverlayState();
+      setOverlayId("latest");
+      await refreshGenerations();
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       setStatus({ state: "error", message });
@@ -221,7 +397,12 @@ export default function GeneratePage() {
   }
 
   function openRewrite() {
-    setRewriteText(output);
+    if (!overlaySource) return;
+    const initial =
+      overlaySource.kind === "latest"
+        ? overlaySource.draft.output
+        : overlaySource.generation.finalText;
+    setRewriteText(initial);
     setRewriteNote("");
     setRewriteOpen(true);
     setRewriteStatus({ state: "idle" });
@@ -233,6 +414,7 @@ export default function GeneratePage() {
   }
 
   async function submitRewrite() {
+    if (!overlaySource) return;
     if (!settings.apiKey) {
       setRewriteStatus({
         state: "error",
@@ -240,14 +422,19 @@ export default function GeneratePage() {
       });
       return;
     }
+    const originalRequest =
+      overlaySource.kind === "latest"
+        ? overlaySource.draft.request
+        : overlaySource.generation.request;
+    const originalDraft =
+      overlaySource.kind === "latest"
+        ? overlaySource.draft.output
+        : overlaySource.generation.finalText;
     if (!rewriteText.trim()) {
-      setRewriteStatus({
-        state: "error",
-        message: "Rewrite is empty.",
-      });
+      setRewriteStatus({ state: "error", message: "Rewrite is empty." });
       return;
     }
-    if (rewriteText.trim() === output.trim()) {
+    if (rewriteText.trim() === originalDraft.trim()) {
       setRewriteStatus({
         state: "error",
         message: "The rewrite is identical to the draft. Edit it first.",
@@ -258,16 +445,13 @@ export default function GeneratePage() {
     try {
       const { correction } = await recordCorrection({
         apiKey: settings.apiKey,
-        request: lastRequest,
-        draft: output,
+        request: originalRequest,
+        draft: originalDraft,
         rewrite: rewriteText,
         note: rewriteNote,
       });
       await refreshCorrections();
-      setRewriteStatus({
-        state: "done",
-        lessons: correction.lessons,
-      });
+      setRewriteStatus({ state: "done", lessons: correction.lessons });
     } catch (err) {
       setRewriteStatus({
         state: "error",
@@ -277,258 +461,421 @@ export default function GeneratePage() {
   }
 
   async function handleCopy() {
-    await navigator.clipboard.writeText(output);
+    if (!overlaySource) return;
+    const text =
+      overlaySource.kind === "latest"
+        ? overlaySource.draft.output
+        : overlaySource.generation.finalText;
+    await navigator.clipboard.writeText(text);
     setCopied(true);
     window.setTimeout(() => setCopied(false), 1200);
-    if (lastRequest) {
-      archiveGeneration({
-        request: lastRequest,
-        source: lastSource,
-        systemPrompt: "(see paired draft folder)",
-        draftV1: output,
-        violationsV1: [],
-        finalText: output,
-        meta: {
-          model: DEFAULT_MODEL,
-          temperature: settings.temperature,
-          finishReason: "COPIED",
-          ms: 0,
-          accepted: true,
-          retried: attemptsUsed > 1,
-        },
-      }).catch((err) => console.error("archive accept failed", err));
+  }
+
+  async function handleDeleteHistory(id: string) {
+    if (!confirm("Delete this generation from history?")) return;
+    try {
+      await deleteGeneration(id);
+      await refreshGenerations();
+      if (overlayId === id) closeOverlay();
+    } catch (err) {
+      console.error("delete generation failed", err);
     }
   }
 
   const hasKey = settings.apiKey.length > 0;
   const hasSamples = samples.length > 0;
-  const selectedWordCount = selectedMetas.reduce((acc, s) => acc + s.wordCount, 0);
-  const lowSampleVolume = hasSamples && selectedWordCount < LOW_SAMPLE_WORDS;
+  const totalSampleWords = samples.reduce((acc, s) => acc + s.wordCount, 0);
+  const lowSampleVolume = hasSamples && totalSampleWords < LOW_SAMPLE_WORDS;
   const isWorking = status.state === "generating";
-  const outputWordCount = output ? output.split(/\s+/).filter(Boolean).length : 0;
+  const isUploading = uploadStatus.state === "processing";
 
   return (
-    <div className="pt-14 pb-16 space-y-10">
-      <PageHeader
-        eyebrow="Generate"
-        title="Draft something in your voice"
-        description="Tell the model what to write. It drafts in your voice and self-revises until the output passes the style guard and hits the requested length."
+    <>
+      <HistorySidebar
+        items={generations}
+        activeId={overlayId}
+        onSelect={openHistory}
+        onDelete={handleDeleteHistory}
       />
 
-      {hasKey && hasSamples && (
-        <div className="flex items-center gap-2 -mt-4 text-[12px] flex-wrap">
-          {profile ? (
-            <>
-              <span className="inline-flex items-center gap-1.5 text-accent">
-                <span className="inline-block h-1.5 w-1.5 rounded-full bg-accent" />
-                Voice profile active
-              </span>
-              <span className="text-muted">·</span>
-              <Link
-                href="/voice/samples"
-                className="text-muted hover:text-foreground underline underline-offset-4"
-              >
-                View on Samples
-              </Link>
-              {corrections.corrections.length > 0 && (
-                <>
-                  <span className="text-muted">·</span>
-                  <span className="inline-flex items-center gap-1.5 text-accent">
-                    <span className="inline-block h-1.5 w-1.5 rounded-full bg-accent" />
-                    {corrections.corrections.length}{" "}
-                    {corrections.corrections.length === 1 ? "revision" : "revisions"}{" "}
-                    learned
-                  </span>
-                </>
-              )}
-            </>
-          ) : (
-            <>
-              <span className="text-muted">No voice profile extracted yet.</span>
-              <Link
-                href="/voice/samples"
-                className="text-foreground/80 hover:text-foreground underline underline-offset-4 font-medium"
-              >
-                Extract one
-              </Link>
-              <span className="text-muted">for stronger imitation.</span>
-            </>
-          )}
-        </div>
-      )}
+      <div className="pt-12 pb-16 space-y-8 pl-[260px]">
+        <div className="max-w-3xl mx-auto px-6 space-y-8">
+          <PageHeader align="center" title="Draft something in your voice" />
 
-      <div className="space-y-3">
-        {!hasKey && (
-          <Banner tone="error">
-            <span>
-              You need a Gemini API key first.{" "}
-              <Link href="/voice/settings" className="font-medium underline underline-offset-4">
-                Add one in Settings
-              </Link>
-              .
-            </span>
-          </Banner>
-        )}
-        {hasKey && !hasSamples && (
-          <Banner tone="warn">
-            <span>
-              No writing samples yet. The model will fall back to a plain voice.{" "}
-              <Link href="/voice/samples" className="font-medium underline underline-offset-4">
-                Add some samples
-              </Link>{" "}
-              for a real match.
-            </span>
-          </Banner>
-        )}
-        {lowSampleVolume && (
-          <Banner tone="warn">
-            Only {selectedWordCount} words selected across your samples. Voice modeling
-            needs more text to lock in. Aim for {LOW_SAMPLE_WORDS}+ words minimum.
-          </Banner>
-        )}
-      </div>
-
-      <Card className="space-y-5">
-        <div className="space-y-2">
-          <FieldLabel htmlFor="request">What should the model write?</FieldLabel>
-          <textarea
-            id="request"
-            value={request}
-            onChange={(e) => setRequest(e.target.value)}
-            placeholder="A 300-word blog post about why I switched from Vim to Helix..."
-            rows={4}
-            className={textareaClass}
-          />
-        </div>
-
-        <details className="group rounded-xl border border-hairline bg-background overflow-hidden">
-          <summary className="cursor-pointer px-4 py-3 text-[13.5px] font-medium tracking-tight2 select-none flex items-center justify-between hover:bg-surface/50 transition-colors">
-            <span>Source material</span>
-            <span className="text-[11.5px] text-muted font-normal group-open:hidden">
-              Optional
-            </span>
-          </summary>
-          <div className="px-4 pb-4 pt-1 space-y-2 border-t border-hairline">
-            <Hint>Notes, an outline, or a rough draft to rewrite in your voice.</Hint>
-            <textarea
-              value={source}
-              onChange={(e) => setSource(e.target.value)}
-              placeholder="Paste notes or a draft..."
-              rows={6}
-              className={textareaClass}
-            />
+          <div className="space-y-3">
+            {!hasKey && (
+              <Banner tone="error">
+                <span>
+                  You need a Gemini API key first.{" "}
+                  <Link
+                    href="/voice/settings"
+                    className="font-medium underline underline-offset-4"
+                  >
+                    Add one in Settings
+                  </Link>
+                  .
+                </span>
+              </Banner>
+            )}
+            {hasKey && !hasSamples && (
+              <Banner tone="warn">
+                <span>
+                  No writing samples yet. The model will fall back to a plain voice.{" "}
+                  <Link
+                    href="/voice/samples"
+                    className="font-medium underline underline-offset-4"
+                  >
+                    Add some samples
+                  </Link>{" "}
+                  for a real match.
+                </span>
+              </Banner>
+            )}
+            {lowSampleVolume && (
+              <Banner tone="warn">
+                Only {totalSampleWords} words across your samples. Voice modeling
+                needs more text to lock in. Aim for {LOW_SAMPLE_WORDS}+ words minimum.
+              </Banner>
+            )}
           </div>
-        </details>
 
-        {samples.length > 0 && (
-          <details className="group rounded-xl border border-hairline bg-background overflow-hidden">
-            <summary className="cursor-pointer px-4 py-3 text-[13.5px] font-medium tracking-tight2 select-none flex items-center justify-between hover:bg-surface/50 transition-colors">
-              <span>Voice samples</span>
-              <span className="text-[11.5px] text-muted font-normal">
-                {selectedIds.size} of {samples.length} selected
-              </span>
-            </summary>
-            <div className="px-4 pb-4 pt-3 space-y-3 border-t border-hairline">
-              <div className="flex items-center gap-3">
-                <GhostButton onClick={selectAll}>Select all</GhostButton>
-                <span className="text-muted text-[11px]">·</span>
-                <GhostButton onClick={selectNone}>Select none</GhostButton>
-              </div>
-              <ul className="space-y-1 max-h-64 overflow-y-auto pr-1">
-                {samples.map((s) => (
-                  <li key={s.id}>
-                    <label className="flex items-center gap-2.5 py-1.5 text-[13.5px] cursor-pointer group/item">
-                      <input
-                        type="checkbox"
-                        checked={selectedIds.has(s.id)}
-                        onChange={() => toggleSample(s.id)}
-                        className="h-3.5 w-3.5 accent-[var(--accent)]"
-                      />
-                      <span className="flex-1">{s.name}</span>
-                      <span className="font-mono text-[11px] text-muted">
-                        {s.wordCount} words
-                      </span>
-                    </label>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          </details>
-        )}
-
-        <div className="flex items-center gap-3 pt-1">
-          <AccentButton
-            onClick={handleGenerate}
-            disabled={isWorking || !hasKey || !request.trim()}
-          >
-            {status.state === "generating" && (
-              <>
-                <Spinner />
-                {status.attempt === 1
-                  ? "Drafting…"
-                  : `Revising (attempt ${status.attempt} of ${MAX_ATTEMPTS})…`}
-              </>
-            )}
-            {!isWorking && (
-              <>
-                Generate
-                <span aria-hidden className="ml-0.5">→</span>
-              </>
-            )}
-          </AccentButton>
-          {status.state === "error" && (
-            <span className="text-[12.5px] text-red-600 dark:text-red-400">
-              {status.message}
-            </span>
-          )}
-        </div>
-      </Card>
-
-      {output && (
-        <section className="space-y-3">
-          <div className="flex items-baseline justify-between flex-wrap gap-3">
-            <div className="flex items-baseline gap-3">
-              <Eyebrow>Draft</Eyebrow>
-              <span className="font-mono text-[11px] text-muted">
-                {outputWordCount.toLocaleString()} words
-              </span>
-              {attemptsUsed > 1 && (
-                <span className="text-[11.5px] text-muted">
-                  self-revised {attemptsUsed - 1} time{attemptsUsed - 1 === 1 ? "" : "s"}
+          <Card className="space-y-6 p-8">
+            <div className="relative">
+              <textarea
+                id="request"
+                value={request}
+                onChange={(e) => setRequest(e.target.value)}
+                onFocus={() => setRequestFocused(true)}
+                onBlur={() => setRequestFocused(false)}
+                rows={8}
+                className={`${textareaClass} text-[15px]`}
+              />
+              {request.length === 0 && (
+                <span
+                  aria-hidden
+                  className={`prompt-overlay ${
+                    placeholderPhase === "exiting" ? "prompt-overlay-exit" : ""
+                  } ${
+                    placeholderPhase === "entering" ? "prompt-overlay-enter" : ""
+                  }`}
+                >
+                  {PROMPT_PLACEHOLDERS[placeholderIndex]}
                 </span>
               )}
             </div>
-            <div className="flex items-center gap-3">
-              <SecondaryButton onClick={handleCopy}>
-                {copied ? "Copied" : "Copy"}
-              </SecondaryButton>
-            </div>
-          </div>
 
-          <Card className="bg-background">
-            <div className="text-[15px] leading-[1.65] whitespace-pre-wrap">
-              {output}
+            {attachments.length > 0 && (
+              <div className="flex flex-wrap gap-2">
+                {attachments.map((att) => (
+                  <span
+                    key={att.id}
+                    className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md bg-bg-raised border border-line text-[12.5px] text-ink"
+                  >
+                    <PaperclipIcon />
+                    <span className="max-w-[200px] truncate">{att.name}</span>
+                    <button
+                      type="button"
+                      onClick={() => removeAttachment(att.id)}
+                      className="text-faint hover:text-ink transition-colors"
+                      aria-label={`Remove ${att.name}`}
+                    >
+                      ×
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
+
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".pdf,.txt,.md,.markdown,application/pdf,text/plain,text/markdown"
+              multiple
+              disabled={isUploading}
+              onChange={(e) => {
+                if (e.target.files) handleUploadFiles(e.target.files);
+              }}
+              className="sr-only"
+            />
+
+            <div className="flex items-center justify-between gap-3 pt-1 flex-wrap">
+              <div className="flex items-center gap-3 flex-wrap">
+                <SecondaryButton
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={isUploading}
+                >
+                  <PaperclipIcon />
+                  {isUploading ? uploadStatus.message : "Upload files"}
+                </SecondaryButton>
+                {uploadStatus.state === "error" && (
+                  <span className="text-[12px] text-rose-600 dark:text-rose-400">
+                    {uploadStatus.message}
+                  </span>
+                )}
+              </div>
+
+              <AccentButton
+                onClick={handleGenerate}
+                disabled={isWorking || !hasKey || !request.trim()}
+              >
+                {status.state === "generating" && (
+                  <>
+                    <Spinner />
+                    {status.attempt === 1
+                      ? "Drafting…"
+                      : `Revising (attempt ${status.attempt} of ${MAX_ATTEMPTS})…`}
+                  </>
+                )}
+                {!isWorking && (
+                  <>
+                    Generate
+                    <span aria-hidden className="ml-0.5">
+                      →
+                    </span>
+                  </>
+                )}
+              </AccentButton>
             </div>
+            {status.state === "error" && (
+              <span className="text-[12.5px] text-red-600 dark:text-red-400">
+                {status.message}
+              </span>
+            )}
           </Card>
 
-          {truncated && (
-            <Banner tone="warn">
-              The model hit its output limit and the response was cut off mid-thought. Try
-              again, or ask for a shorter piece. If your samples are very long, deselecting
-              some can free up room for output.
-            </Banner>
+          {lastDraft && overlayId === null && (
+            <div className="flex items-baseline justify-between gap-3 px-2">
+              <span className="text-[13px] text-muted">
+                Last draft ready ·{" "}
+                <span className="text-ink">
+                  {lastDraft.output.split(/\s+/).filter(Boolean).length} words
+                </span>
+                {lastDraft.attemptsUsed > 1 && (
+                  <span className="text-faint">
+                    {" · "}self-revised {lastDraft.attemptsUsed - 1}×
+                  </span>
+                )}
+              </span>
+              <button
+                type="button"
+                onClick={() => setOverlayId("latest")}
+                className="text-[13px] text-violet hover:text-violet-deep underline underline-offset-4"
+              >
+                View →
+              </button>
+            </div>
           )}
+        </div>
+      </div>
 
-          <div className="pt-4 border-t border-hairline">
+      {overlayId !== null && (
+        <OutputOverlay
+          source={overlaySource}
+          loading={overlayLoading}
+          onClose={closeOverlay}
+          onCopy={handleCopy}
+          copied={copied}
+          rewriteOpen={rewriteOpen}
+          openRewrite={openRewrite}
+          closeRewrite={closeRewrite}
+          rewriteText={rewriteText}
+          setRewriteText={setRewriteText}
+          rewriteNote={rewriteNote}
+          setRewriteNote={setRewriteNote}
+          rewriteStatus={rewriteStatus}
+          submitRewrite={submitRewrite}
+        />
+      )}
+    </>
+  );
+}
+
+function HistorySidebar({
+  items,
+  activeId,
+  onSelect,
+  onDelete,
+}: {
+  items: { id: string; createdAt: number; request: string }[];
+  activeId: null | "latest" | string;
+  onSelect: (id: string) => void;
+  onDelete: (id: string) => void;
+}) {
+  return (
+    <aside
+      className="fixed left-0 top-16 bottom-0 w-[240px] z-30 overflow-y-auto p-5 space-y-4"
+      style={{
+        background: "rgba(20, 18, 30, 0.05)",
+        backdropFilter: "blur(20px) saturate(1.15)",
+        WebkitBackdropFilter: "blur(20px) saturate(1.15)",
+        borderRight: "1px solid var(--line)",
+      }}
+    >
+      <Eyebrow>Chat History</Eyebrow>
+      {items.length === 0 ? (
+        <p className="text-[12.5px] text-faint">No drafts yet.</p>
+      ) : (
+        <ul className="space-y-1">
+          {items.map((g) => {
+            const isActive = activeId === g.id;
+            const preview = g.request.trim().slice(0, 80);
+            return (
+              <li key={g.id} className="group/item relative">
+                <button
+                  type="button"
+                  onClick={() => onSelect(g.id)}
+                  className={`w-full text-left px-3 py-2 rounded-md transition-colors ${
+                    isActive
+                      ? "bg-white/40 border border-line"
+                      : "hover:bg-white/30 border border-transparent"
+                  }`}
+                >
+                  <p className="text-[13px] text-ink line-clamp-2 leading-snug">
+                    {preview || "Untitled"}
+                  </p>
+                  <p className="mt-1 text-[10.5px] text-faint mono tracking-wide">
+                    {formatRelativeTime(g.createdAt)}
+                  </p>
+                </button>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onDelete(g.id);
+                  }}
+                  className="absolute top-2 right-2 text-faint hover:text-rose-500 opacity-0 group-hover/item:opacity-100 transition-opacity text-[12px]"
+                  aria-label="Delete from history"
+                >
+                  ×
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </aside>
+  );
+}
+
+function OutputOverlay({
+  source,
+  loading,
+  onClose,
+  onCopy,
+  copied,
+  rewriteOpen,
+  openRewrite,
+  closeRewrite,
+  rewriteText,
+  setRewriteText,
+  rewriteNote,
+  setRewriteNote,
+  rewriteStatus,
+  submitRewrite,
+}: {
+  source: OverlaySource | null;
+  loading: boolean;
+  onClose: () => void;
+  onCopy: () => void | Promise<void>;
+  copied: boolean;
+  rewriteOpen: boolean;
+  openRewrite: () => void;
+  closeRewrite: () => void;
+  rewriteText: string;
+  setRewriteText: (s: string) => void;
+  rewriteNote: string;
+  setRewriteNote: (s: string) => void;
+  rewriteStatus: {
+    state: "idle" | "submitting" | "done" | "error";
+    message?: string;
+    lessons?: string[];
+  };
+  submitRewrite: () => void | Promise<void>;
+}) {
+  const text =
+    source?.kind === "latest"
+      ? source.draft.output
+      : source?.kind === "historical"
+        ? source.generation.finalText
+        : "";
+  const request =
+    source?.kind === "latest"
+      ? source.draft.request
+      : source?.kind === "historical"
+        ? source.generation.request
+        : "";
+  const attemptsUsed =
+    source?.kind === "latest"
+      ? source.draft.attemptsUsed
+      : source?.kind === "historical"
+        ? source.generation.meta?.retried
+          ? 2
+          : 1
+        : 0;
+  const wordCount = text ? text.split(/\s+/).filter(Boolean).length : 0;
+
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") onClose();
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  return (
+    <div className="output-overlay fixed inset-x-0 bottom-0 top-16 z-[80] bg-white overflow-y-auto">
+      <div className="max-w-3xl mx-auto px-8 py-10 space-y-8">
+        <div className="flex items-start justify-between gap-6">
+          <div className="space-y-2 min-w-0">
+            <p className="mono text-[10.5px] uppercase tracking-[0.18em] text-text-low">
+              {wordCount.toLocaleString()} words
+              {attemptsUsed > 1 && (
+                <span className="text-faint">
+                  {" · "}self-revised {attemptsUsed - 1}×
+                </span>
+              )}
+            </p>
+            <p className="text-[14px] text-muted line-clamp-2 leading-snug">
+              {request}
+            </p>
+          </div>
+          <div className="flex items-center gap-3 shrink-0">
+            <SecondaryButton onClick={onCopy}>
+              {copied ? "Copied" : "Copy"}
+            </SecondaryButton>
+            <button
+              type="button"
+              onClick={onClose}
+              className="text-faint hover:text-ink transition-colors text-[20px] leading-none px-2"
+              aria-label="Close"
+            >
+              ×
+            </button>
+          </div>
+        </div>
+
+        {loading && (
+          <p className="text-[14px] text-muted italic">Loading…</p>
+        )}
+
+        {!loading && text && (
+          <article className="font-serif text-[18px] leading-[1.75] whitespace-pre-wrap text-ink">
+            {text}
+          </article>
+        )}
+
+        {!loading && text && (
+          <div className="pt-6 border-t border-line">
             {!rewriteOpen && rewriteStatus.state !== "done" && (
               <div className="flex items-baseline justify-between gap-3 flex-wrap">
                 <div className="space-y-1">
-                  <p className="text-[13.5px] text-foreground/85">
+                  <p className="text-[13.5px] text-ink">
                     Did this miss the mark? Show me how you would write it.
                   </p>
                   <p className="text-[12px] text-muted leading-relaxed">
-                    Edit the draft into the version you actually want. The model will
-                    extract concrete lessons and apply them on every future generation.
+                    Edit the draft into the version you actually want. The model
+                    will extract concrete lessons and apply them on every future
+                    generation.
                   </p>
                 </div>
                 <SecondaryButton onClick={openRewrite}>
@@ -542,9 +889,12 @@ export default function GeneratePage() {
                 <div className="space-y-2">
                   <div className="flex items-baseline justify-between gap-3">
                     <Eyebrow>Your rewrite</Eyebrow>
-                    <span className="font-mono text-[11px] text-muted">
+                    <span className="font-mono text-[11px] text-faint">
                       {rewriteText
-                        ? rewriteText.split(/\s+/).filter(Boolean).length.toLocaleString()
+                        ? rewriteText
+                            .split(/\s+/)
+                            .filter(Boolean)
+                            .length.toLocaleString()
                         : 0}{" "}
                       words
                     </span>
@@ -569,7 +919,10 @@ export default function GeneratePage() {
                 <div className="flex items-center gap-3 flex-wrap">
                   <AccentButton
                     onClick={submitRewrite}
-                    disabled={rewriteStatus.state === "submitting" || !rewriteText.trim()}
+                    disabled={
+                      rewriteStatus.state === "submitting" ||
+                      !rewriteText.trim()
+                    }
                   >
                     {rewriteStatus.state === "submitting" ? (
                       <>
@@ -597,9 +950,9 @@ export default function GeneratePage() {
               <div className="space-y-3">
                 <Banner tone="success">
                   Learned {rewriteStatus.lessons?.length ?? 0}{" "}
-                  {rewriteStatus.lessons?.length === 1 ? "lesson" : "lessons"} from your
-                  rewrite. The digest has been updated and will apply to your next
-                  generation.
+                  {rewriteStatus.lessons?.length === 1 ? "lesson" : "lessons"} from
+                  your rewrite. The digest has been updated and will apply to
+                  your next generation.
                 </Banner>
                 {rewriteStatus.lessons && rewriteStatus.lessons.length > 0 && (
                   <Card className="space-y-2">
@@ -608,7 +961,7 @@ export default function GeneratePage() {
                       {rewriteStatus.lessons.map((lesson, i) => (
                         <li
                           key={i}
-                          className="text-[13.5px] text-foreground/85 leading-relaxed pl-4 relative"
+                          className="text-[13.5px] text-ink leading-relaxed pl-4 relative"
                         >
                           <span className="absolute left-0 top-[8px] inline-block h-1 w-1 rounded-full bg-accent" />
                           {lesson}
@@ -618,7 +971,7 @@ export default function GeneratePage() {
                     <div className="pt-2">
                       <Link
                         href="/voice/corrections"
-                        className="text-[12.5px] text-muted hover:text-foreground underline underline-offset-4"
+                        className="text-[12.5px] text-muted hover:text-ink underline underline-offset-4"
                       >
                         View all revisions →
                       </Link>
@@ -628,8 +981,8 @@ export default function GeneratePage() {
               </div>
             )}
           </div>
-        </section>
-      )}
+        )}
+      </div>
     </div>
   );
 }
@@ -659,3 +1012,20 @@ function Spinner() {
   );
 }
 
+function PaperclipIcon() {
+  return (
+    <svg
+      className="h-3.5 w-3.5"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.75}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      xmlns="http://www.w3.org/2000/svg"
+      aria-hidden
+    >
+      <path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 17.99 8.7l-8.59 8.59a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+    </svg>
+  );
+}

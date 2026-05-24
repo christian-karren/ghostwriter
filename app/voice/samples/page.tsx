@@ -4,19 +4,13 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import {
   addSample,
-  clearProfile,
   deleteSample,
   hydrateSamples,
-  saveProfile,
   updateSample,
 } from "../_lib/storage";
 import { useData } from "../_lib/DataProvider";
 import { extractPdfText, isPdfFile } from "../_lib/pdf";
-import {
-  extractVoiceProfile,
-  formatRelativeTime,
-  isProfileStale,
-} from "../_lib/profile";
+import { formatRelativeTime, isProfileStale } from "../_lib/profile";
 import type { Sample } from "../_lib/types";
 import {
   Banner,
@@ -35,7 +29,14 @@ import {
 const PREVIEW_LEN = 320;
 
 export default function SamplesPage() {
-  const { samples, settings, profile, refreshSamples, refreshProfile } = useData();
+  const {
+    samples,
+    settings,
+    profile,
+    profileSyncing,
+    profileSyncError,
+    refreshSamples,
+  } = useData();
 
   const [hydrated, setHydrated] = useState<Map<string, string>>(new Map());
   const [name, setName] = useState("");
@@ -49,14 +50,9 @@ export default function SamplesPage() {
     message?: string;
   }>({ state: "idle" });
   const [dragDepth, setDragDepth] = useState(0);
-  const [profileStatus, setProfileStatus] = useState<{
-    state: "idle" | "extracting" | "error";
-    message?: string;
-  }>({ state: "idle" });
   const fileInputRef = useRef<HTMLInputElement>(null);
   const isDragging = dragDepth > 0;
   const isProcessing = uploadStatus.state === "processing";
-  const isExtractingProfile = profileStatus.state === "extracting";
 
   useEffect(() => {
     let cancelled = false;
@@ -79,44 +75,6 @@ export default function SamplesPage() {
       cancelled = true;
     };
   }, [samples, hydrated]);
-
-  async function handleExtractProfile() {
-    if (!settings.apiKey) {
-      setProfileStatus({
-        state: "error",
-        message: "Add your Gemini API key in Settings first.",
-      });
-      return;
-    }
-    if (samples.length === 0) {
-      setProfileStatus({
-        state: "error",
-        message: "Add at least one writing sample before extracting a profile.",
-      });
-      return;
-    }
-    setProfileStatus({ state: "extracting" });
-    try {
-      const full = await hydrateSamples(samples);
-      const next = await extractVoiceProfile({
-        apiKey: settings.apiKey,
-        samples: full,
-      });
-      await saveProfile(next, profile?.userEdited ? true : false);
-      await refreshProfile();
-      setProfileStatus({ state: "idle" });
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      setProfileStatus({ state: "error", message });
-    }
-  }
-
-  async function handleClearProfile() {
-    if (!confirm("Clear the voice profile? You can regenerate it later.")) return;
-    await clearProfile();
-    await refreshProfile();
-    setProfileStatus({ state: "idle" });
-  }
 
   async function handleAdd() {
     if (!content.trim()) return;
@@ -293,138 +251,109 @@ export default function SamplesPage() {
   const hasKey = !!settings.apiKey;
 
   return (
-    <div className="pt-14 pb-16 space-y-12">
+    <div className="pt-8 pb-24 space-y-12">
       <PageHeader
         eyebrow="Samples"
-        title="Your writing library"
-        description="Anything you have written that sounds like you. The more you add, the better the voice match. Aim for a few thousand words across multiple pieces."
+        title="Your writing library."
+        description="Anything you've written that sounds like you. The more you add, the sharper the voice match. A few thousand words across multiple pieces is the sweet spot."
       />
 
-      <section className="space-y-3">
+      <section
+        className="space-y-5 reveal"
+        style={{ animationDelay: "80ms" }}
+      >
         <div className="flex items-baseline justify-between gap-4">
-          <div className="space-y-1">
+          <div className="space-y-2">
             <Eyebrow>Voice profile</Eyebrow>
-            <p className="text-[13px] text-muted leading-relaxed max-w-prose">
-              A distilled description of your voice, extracted from your samples by the
-              same model that will later imitate you. Injected at the top of every
-              generation so the model has an explicit guide, not just raw examples.
+            <p className="text-[14px] text-muted leading-[1.6] max-w-[60ch]">
+              A distilled description of your voice, updated automatically whenever
+              your samples change.
             </p>
           </div>
-          {profile && (
-            <span className="font-mono text-[11px] text-muted shrink-0">
+          {profile && !profileSyncing && (
+            <span className="mono text-[11px] text-faint shrink-0 tracking-wide">
               {formatRelativeTime(profile.generatedAt)}
             </span>
           )}
+          {profileSyncing && (
+            <span className="inline-flex items-center gap-1.5 text-[11px] text-violet shrink-0">
+              <span className="h-1.5 w-1.5 rounded-full bg-violet animate-pulse" />
+              Distilling…
+            </span>
+          )}
         </div>
-        <Card className="space-y-4">
-          {!profile && (
-            <div className="space-y-3">
-              <p className="text-[13.5px] text-muted leading-relaxed">
-                {samples.length === 0
-                  ? "Add at least one writing sample below, then extract a profile."
-                  : !hasKey
-                    ? "Add your Gemini API key in Settings, then come back to extract."
-                    : "No profile yet. Click to analyze your samples and build one."}
-              </p>
-              <PrimaryButton
-                onClick={handleExtractProfile}
-                disabled={
-                  isExtractingProfile || !hasKey || samples.length === 0
-                }
-              >
-                {isExtractingProfile ? (
-                  <>
-                    <ProfileSpinner />
-                    Analyzing samples…
-                  </>
-                ) : (
-                  "Extract voice profile"
-                )}
-              </PrimaryButton>
-            </div>
+        <Card className="space-y-5">
+          {!profile && samples.length === 0 && (
+            <p className="text-[14px] text-muted leading-relaxed">
+              Add samples below and a voice profile will be distilled automatically.
+            </p>
+          )}
+          {!profile && samples.length > 0 && !hasKey && (
+            <p className="text-[14px] text-muted leading-relaxed">
+              Add your Gemini API key in Settings and the profile will distill
+              itself.
+            </p>
+          )}
+          {!profile && samples.length > 0 && hasKey && (
+            <p className="text-[14px] text-muted italic leading-relaxed">
+              Reading your samples…
+            </p>
           )}
           {profile && (
-            <div className="space-y-4">
-              {profileStale && (
-                <Banner tone="warn">
-                  Your samples have changed since this profile was extracted. Regenerate
-                  for a refreshed read on your voice.
-                </Banner>
-              )}
+            <>
               {profile.userEdited && (
                 <Banner tone="warn">
-                  This profile has been edited by hand in voice/profile.md. Regenerating
-                  will overwrite your edits (the previous version is backed up under
-                  voice/.history/).
+                  This profile was edited by hand in voice/profile.md. Auto-updates
+                  paused. Delete the file (in your data folder) to resume.
                 </Banner>
               )}
-              <p className="text-[14.5px] leading-relaxed whitespace-pre-wrap text-foreground/90">
+              {profileStale && !profileSyncing && !hasKey && (
+                <Banner tone="info">
+                  Your samples have changed. Add your Gemini API key in Settings to
+                  refresh the profile.
+                </Banner>
+              )}
+              <p className="text-[15px] leading-[1.7] whitespace-pre-wrap text-ink/90">
                 {profile.profile}
               </p>
-              <div className="flex items-center gap-2 pt-1 flex-wrap">
-                <SecondaryButton
-                  onClick={handleExtractProfile}
-                  disabled={isExtractingProfile || !hasKey || samples.length === 0}
-                >
-                  {isExtractingProfile ? (
-                    <>
-                      <ProfileSpinner />
-                      Regenerating…
-                    </>
-                  ) : (
-                    "Regenerate"
-                  )}
-                </SecondaryButton>
-                <GhostButton
-                  onClick={handleClearProfile}
-                  disabled={isExtractingProfile}
-                >
-                  Clear
-                </GhostButton>
-              </div>
-            </div>
+            </>
           )}
-          {profileStatus.state === "error" && profileStatus.message && (
-            <Banner tone="error">{profileStatus.message}</Banner>
+          {profileSyncError && (
+            <Banner tone="error">
+              Couldn&apos;t refresh voice profile: {profileSyncError}
+            </Banner>
           )}
         </Card>
       </section>
 
-      <section className="space-y-3">
+      <section
+        className="space-y-3 reveal"
+        style={{ animationDelay: "160ms" }}
+      >
         <label
           htmlFor="voice-file-input"
           onDragEnter={handleDragEnter}
           onDragLeave={handleDragLeave}
           onDragOver={handleDragOver}
           onDrop={handleDrop}
-          className={`relative flex flex-col items-center justify-center gap-3 rounded-2xl border-2 border-dashed px-6 py-12 text-center transition-all ${
-            isProcessing
-              ? "cursor-wait border-hairline-strong bg-surface/50"
-              : isDragging
-                ? "cursor-copy border-accent bg-accent-soft scale-[1.01]"
-                : "cursor-pointer border-hairline bg-surface/30 hover:border-hairline-strong hover:bg-surface/60"
-          }`}
+          className={`dropzone flex flex-col items-center justify-center gap-3 px-6 py-14 text-center cursor-pointer ${
+            isProcessing ? "cursor-wait" : ""
+          } ${isDragging ? "dropzone-active" : ""}`}
         >
-          <div
-            className={`flex h-11 w-11 items-center justify-center rounded-full transition-colors ${
-              isDragging ? "bg-accent/15 text-accent" : "bg-surface text-muted"
-            }`}
-          >
+          <div className="flex h-12 w-12 items-center justify-center rounded-full text-text-mid">
             {isProcessing ? <UploadSpinner /> : <UploadIcon />}
           </div>
-          <div className="space-y-1">
-            <p className="text-[14.5px] font-medium tracking-tight2">
+          <div className="space-y-1.5">
+            <p className="text-[15px] font-medium text-text-hi tracking-[-0.005em]">
               {isProcessing
                 ? uploadStatus.message
                 : isDragging
                   ? "Release to upload"
-                  : "Drop files here, or click to browse"}
+                  : "Drop files or click to browse"}
             </p>
             {!isProcessing && !isDragging && (
-              <p className="text-[12.5px] text-muted">
-                <span className="font-mono">PDF</span> ·{" "}
-                <span className="font-mono">.txt</span> ·{" "}
-                <span className="font-mono">.md</span> · multiple files supported
+              <p className="text-[11.5px] text-text-low mono tracking-wider uppercase">
+                pdf · txt · md · multiple supported
               </p>
             )}
           </div>
@@ -447,17 +376,26 @@ export default function SamplesPage() {
         )}
       </section>
 
-      <Card className="space-y-4">
-        <div className="flex items-baseline justify-between">
-          <h2 className="text-[14px] font-medium tracking-tight2">Add a sample</h2>
+      <Card
+        className="space-y-6 reveal"
+        as="section"
+        style={{ animationDelay: "240ms" }}
+      >
+        <div className="flex items-baseline justify-between gap-4">
+          <div className="space-y-2">
+            <Eyebrow>Add a sample</Eyebrow>
+            <p className="text-[14px] text-text-mid leading-relaxed">
+              Paste writing directly, or use the upload above.
+            </p>
+          </div>
           {previewWordCount > 0 && (
-            <span className="font-mono text-[11px] text-muted">
+            <span className="mono text-[11px] text-text-low">
               {previewWordCount.toLocaleString()} words
             </span>
           )}
         </div>
-        <div className="space-y-3">
-          <div className="space-y-1.5">
+        <div className="space-y-4">
+          <div className="space-y-2">
             <FieldLabel>Title</FieldLabel>
             <input
               type="text"
@@ -467,12 +405,12 @@ export default function SamplesPage() {
               className={inputClass}
             />
           </div>
-          <div className="space-y-1.5">
+          <div className="space-y-2">
             <FieldLabel>Content</FieldLabel>
             <textarea
               value={content}
               onChange={(e) => setContent(e.target.value)}
-              placeholder="Paste your writing here..."
+              placeholder="Paste your writing here…"
               rows={9}
               className={textareaClass}
             />
@@ -485,16 +423,19 @@ export default function SamplesPage() {
         </div>
       </Card>
 
-      <section className="space-y-4">
-        <div className="flex items-baseline justify-between">
-          <div className="space-y-1">
+      <section
+        className="space-y-5 reveal"
+        style={{ animationDelay: "320ms" }}
+      >
+        <div className="flex items-baseline justify-between gap-4">
+          <div className="space-y-2">
             <Eyebrow>Library</Eyebrow>
-            <p className="text-[14px] text-foreground/80">
-              <span className="font-medium">
+            <p className="text-[14px] text-text-hi">
+              <span className="font-medium text-text-hi">
                 {samples.length} {samples.length === 1 ? "piece" : "pieces"}
               </span>
               {totalWords > 0 && (
-                <span className="text-muted">
+                <span className="text-text-mid">
                   {" · "}
                   {totalWords.toLocaleString()} words total
                 </span>
@@ -504,10 +445,8 @@ export default function SamplesPage() {
         </div>
 
         {samples.length === 0 && (
-          <Card className="text-center py-10">
-            <p className="text-[14px] text-muted">
-              No samples yet. Add your first one above.
-            </p>
+          <Card className="text-center py-12">
+            <p className="text-[14px] text-text-low">No samples yet.</p>
           </Card>
         )}
 
@@ -555,33 +494,37 @@ export default function SamplesPage() {
             }
 
             return (
-              <Card as="li" key={s.id} className="space-y-3 transition-all hover:shadow-card-lift hover:border-hairline-strong">
+              <Card
+                as="li"
+                key={s.id}
+                className="space-y-3 transition-shadow duration-200 hover:shadow-bloom"
+              >
                 <div className="flex items-baseline justify-between gap-4">
-                  <h3 className="text-[15px] font-medium tracking-tight2">
+                  <h3 className="text-[16px] font-medium tracking-[-0.012em] text-text-hi">
                     {s.name}
                     {isPdf && (
-                      <span className="ml-2 inline-block font-mono text-[10px] text-muted uppercase tracking-wider">
+                      <span className="ml-2 inline-block mono text-[10px] text-text-low uppercase tracking-wider">
                         pdf
                       </span>
                     )}
                   </h3>
-                  <span className="font-mono text-[11px] text-muted shrink-0">
+                  <span className="mono text-[11px] text-text-low shrink-0">
                     {s.wordCount.toLocaleString()} words
                   </span>
                 </div>
-                <p className="text-[13.5px] text-muted leading-relaxed whitespace-pre-wrap">
+                <p className="text-[13.5px] text-text-mid leading-relaxed whitespace-pre-wrap">
                   {preview || (
-                    <span className="text-foreground/30">Loading preview…</span>
+                    <span className="text-text-low">Loading preview…</span>
                   )}
                   {fullText.length > preview.length && (
-                    <span className="text-foreground/30">…</span>
+                    <span className="text-text-low">…</span>
                   )}
                 </p>
                 <div className="flex items-center gap-4 pt-1">
                   <GhostButton onClick={() => startEdit(s)}>Edit</GhostButton>
                   <GhostButton
                     onClick={() => handleDelete(s.id)}
-                    className="!text-red-600 dark:!text-red-400 hover:!text-red-700 dark:hover:!text-red-300"
+                    className="!text-rose-300/70 hover:!text-rose-200"
                   >
                     Delete
                   </GhostButton>
@@ -593,7 +536,7 @@ export default function SamplesPage() {
 
         {totalWords > 0 && totalWords < 1000 && (
           <Hint>
-            Voice matching gets noticeably better once you cross 1,000 words. Keep adding.
+            Voice matching gets noticeably better past 1,000 words. Keep adding.
           </Hint>
         )}
       </section>
@@ -647,28 +590,3 @@ function UploadIcon() {
   );
 }
 
-function ProfileSpinner() {
-  return (
-    <svg
-      className="animate-spin h-3.5 w-3.5"
-      viewBox="0 0 24 24"
-      fill="none"
-      xmlns="http://www.w3.org/2000/svg"
-      aria-hidden
-    >
-      <circle
-        className="opacity-25"
-        cx="12"
-        cy="12"
-        r="10"
-        stroke="currentColor"
-        strokeWidth="3"
-      />
-      <path
-        className="opacity-90"
-        fill="currentColor"
-        d="M4 12a8 8 0 018-8v3a5 5 0 00-5 5H4z"
-      />
-    </svg>
-  );
-}

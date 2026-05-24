@@ -60,6 +60,40 @@ export type CorrectionsLog = {
   digestUserEdited?: boolean;
 };
 
+export type GenerationSummary = {
+  id: string;
+  createdAt: number;
+  request: string;
+  accepted: boolean;
+};
+
+export type ArchivedGenerationMeta = {
+  model: string;
+  temperature: number;
+  finishReason: string;
+  ms: number;
+  accepted: boolean;
+  retried: boolean;
+};
+
+export type GenerationFull = {
+  id: string;
+  createdAt: number;
+  request: string;
+  source: string | null;
+  finalText: string;
+  meta: ArchivedGenerationMeta | null;
+};
+
+export type LastDraft = {
+  archivedId: string | null;
+  request: string;
+  output: string;
+  attemptsUsed: number;
+  truncated: boolean;
+  finishedAt: number;
+};
+
 export type ArchiveGenerationInput = {
   request: string;
   source?: string;

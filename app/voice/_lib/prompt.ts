@@ -102,7 +102,11 @@ export function buildUserPrompt(request: string, sourceMaterial: string): string
   parts.push(`# Writing request\n\n${request.trim()}`);
   if (sourceMaterial.trim()) {
     parts.push(
-      `# Source material\n\nUse the following as input. Do not quote it verbatim. Rewrite it in the user's voice.\n\n${sourceMaterial.trim()}`,
+      `# Attached files
+
+The user attached the following files as context for this task. Read them carefully. They may contain a rubric, an assignment description, source notes, an outline, or a draft to rewrite. Use them appropriately based on what they are. Follow any constraints they imply. If they look like notes or an outline, expand them in the user's voice. If they look like a rubric or instructions, treat them as requirements.
+
+${sourceMaterial.trim()}`,
     );
   }
   return parts.join("\n\n");

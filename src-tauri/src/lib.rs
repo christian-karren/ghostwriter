@@ -139,6 +139,24 @@ async fn archive_generation(app: AppHandle, input: history::ArchiveGenerationInp
 }
 
 #[tauri::command]
+async fn list_generations(app: AppHandle) -> AppResult<Vec<history::GenerationSummary>> {
+    let r = root(&app).await?;
+    history::list(&r).await
+}
+
+#[tauri::command]
+async fn read_generation(app: AppHandle, id: String) -> AppResult<history::GenerationFull> {
+    let r = root(&app).await?;
+    history::read(&r, &id).await
+}
+
+#[tauri::command]
+async fn delete_generation(app: AppHandle, id: String) -> AppResult<()> {
+    let r = root(&app).await?;
+    history::delete(&r, &id).await
+}
+
+#[tauri::command]
 async fn open_data_dir(app: AppHandle) -> AppResult<()> {
     let r = root(&app).await?;
     let path = r.0.to_string_lossy().to_string();
@@ -196,6 +214,9 @@ pub fn run() {
             set_api_key,
             delete_api_key,
             archive_generation,
+            list_generations,
+            read_generation,
+            delete_generation,
             open_data_dir,
         ])
         .run(tauri::generate_context!())

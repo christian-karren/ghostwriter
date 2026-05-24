@@ -6,6 +6,8 @@ import type {
   ArchiveGenerationInput,
   Correction,
   CorrectionsLog,
+  GenerationFull,
+  GenerationSummary,
   Sample,
   SampleKind,
   SampleMeta,
@@ -236,6 +238,18 @@ export async function archiveGeneration(
       meta: input.meta,
     },
   });
+}
+
+export async function listGenerations(): Promise<GenerationSummary[]> {
+  return invoke<GenerationSummary[]>("list_generations");
+}
+
+export async function readGeneration(id: string): Promise<GenerationFull> {
+  return invoke<GenerationFull>("read_generation", { id });
+}
+
+export async function deleteGeneration(id: string): Promise<void> {
+  await invoke("delete_generation", { id });
 }
 
 /* misc */
