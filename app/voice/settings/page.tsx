@@ -124,7 +124,7 @@ export default function SettingsPage() {
         <div className="space-y-0.5">
           <h2 className="text-[14px] font-medium tracking-tight2">Your data folder</h2>
           <p className="text-[12px] text-muted">
-            Samples, voice profile, corrections, and generation history all live on disk
+            Samples, voice profile, revisions, and generation history all live on disk
             as plain files. Edit them in your favorite editor, run git on the folder,
             back them up however you want.
           </p>

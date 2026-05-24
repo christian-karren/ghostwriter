@@ -43,7 +43,7 @@ export default function CorrectionsPage() {
     if (log.corrections.length === 0) {
       setStatus({
         state: "error",
-        message: "No corrections to consolidate.",
+        message: "No revisions to consolidate.",
       });
       return;
     }
@@ -69,14 +69,14 @@ export default function CorrectionsPage() {
   }
 
   async function handleDelete(id: string) {
-    if (!confirm("Delete this correction? Future generations will lose this lesson.")) return;
+    if (!confirm("Delete this revision? Future generations will lose this lesson.")) return;
     await deleteCorrection(id);
     await refreshCorrections();
     if (expandedId === id) setExpandedId(null);
   }
 
   async function handleClearAll() {
-    if (!confirm("Clear ALL corrections? The digest will be wiped too. This cannot be undone.")) return;
+    if (!confirm("Clear ALL revisions? The digest will be wiped too. This cannot be undone.")) return;
     await clearCorrections();
     await refreshCorrections();
   }
@@ -87,7 +87,7 @@ export default function CorrectionsPage() {
   return (
     <div className="pt-14 pb-16 space-y-12">
       <PageHeader
-        eyebrow="Corrections"
+        eyebrow="Revisions"
         title="Lessons the model has learned from your rewrites"
         description="Every time you submit a rewrite on the Generate page, the model extracts concrete lessons about what you want. Those lessons get consolidated into a digest that's injected into every future generation."
       />
@@ -140,7 +140,7 @@ export default function CorrectionsPage() {
               >
                 {status.state === "rebuilding" ? "Rebuilding…" : "Rebuild digest"}
               </SecondaryButton>
-              <GhostButton onClick={handleClearAll}>Clear all corrections</GhostButton>
+              <GhostButton onClick={handleClearAll}>Clear all revisions</GhostButton>
             </div>
           )}
           {status.state === "error" && status.message && (
@@ -155,7 +155,7 @@ export default function CorrectionsPage() {
           <p className="text-[14px] text-foreground/80">
             <span className="font-medium">
               {log.corrections.length}{" "}
-              {log.corrections.length === 1 ? "correction" : "corrections"}
+              {log.corrections.length === 1 ? "revision" : "revisions"}
             </span>
             {log.corrections.length > 0 && (
               <span className="text-muted">
@@ -169,7 +169,7 @@ export default function CorrectionsPage() {
         {!hasCorrections && (
           <Card className="text-center py-10">
             <p className="text-[14px] text-muted">
-              No corrections yet. Head to{" "}
+              No revisions yet. Head to{" "}
               <Link
                 href="/voice/generate"
                 className="text-foreground underline underline-offset-4"
@@ -196,7 +196,7 @@ export default function CorrectionsPage() {
 
         {hasCorrections && (
           <Hint>
-            Recent corrections weigh slightly more in the digest. Older ones still
+            Recent revisions weigh slightly more in the digest. Older ones still
             count, just less.
           </Hint>
         )}

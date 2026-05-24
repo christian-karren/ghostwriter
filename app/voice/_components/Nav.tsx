@@ -7,7 +7,7 @@ import { usePathname } from "next/navigation";
 const TABS = [
   { href: "/voice/generate", label: "Generate" },
   { href: "/voice/samples", label: "Samples" },
-  { href: "/voice/corrections", label: "Corrections" },
+  { href: "/voice/corrections", label: "Revisions" },
   { href: "/voice/settings", label: "Settings" },
 ];
 
@@ -15,7 +15,7 @@ export function Nav() {
   const pathname = usePathname();
 
   return (
-    <nav className="sticky top-0 z-40 backdrop-blur-md bg-background/75 border-b border-hairline">
+    <nav className="sticky top-0 z-40 bg-white border-b border-hairline">
       <div className="max-w-5xl mx-auto px-6 h-16 flex items-center justify-between">
         <Link href="/voice" className="flex items-center gap-2.5">
           <Image
