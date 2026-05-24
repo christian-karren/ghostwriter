@@ -1,6 +1,6 @@
 "use client";
 
-export const DEFAULT_MODEL = "gemini-2.5-pro";
+export const DEFAULT_MODEL = "gemini-2.5-flash";
 
 type GenerateOptions = {
   apiKey: string;
