@@ -1,8 +1,10 @@
 "use client";
 
+export const DEFAULT_MODEL = "gemini-2.5-pro";
+
 type GenerateOptions = {
   apiKey: string;
-  model: string;
+  model?: string;
   systemPrompt: string;
   userPrompt: string;
   temperature?: number;
@@ -26,7 +28,7 @@ type GeminiResponse = {
 export async function generateText(opts: GenerateOptions): Promise<GenerateResult> {
   const {
     apiKey,
-    model,
+    model = DEFAULT_MODEL,
     systemPrompt,
     userPrompt,
     temperature = 0.7,

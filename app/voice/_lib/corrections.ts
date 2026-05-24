@@ -52,13 +52,12 @@ Output a single coherent passage of 200 to 500 words, written in second-person i
 
 export async function extractLessons(opts: {
   apiKey: string;
-  model: string;
   request: string;
   draft: string;
   rewrite: string;
   note?: string;
 }): Promise<string[]> {
-  const { apiKey, model, request, draft, rewrite, note } = opts;
+  const { apiKey, request, draft, rewrite, note } = opts;
   if (!draft.trim() || !rewrite.trim()) {
     throw new Error("Need both the draft and your rewrite to extract lessons.");
   }
@@ -68,7 +67,6 @@ export async function extractLessons(opts: {
 
   const result = await generateText({
     apiKey,
-    model,
     systemPrompt: EXTRACT_SYSTEM,
     userPrompt,
     temperature: 0.3,
@@ -80,10 +78,9 @@ export async function extractLessons(opts: {
 
 export async function consolidateDigest(opts: {
   apiKey: string;
-  model: string;
   corrections: Correction[];
 }): Promise<string> {
-  const { apiKey, model, corrections } = opts;
+  const { apiKey, corrections } = opts;
   if (corrections.length === 0) return "";
 
   const allLessons = corrections
@@ -99,7 +96,6 @@ export async function consolidateDigest(opts: {
 
   const result = await generateText({
     apiKey,
-    model,
     systemPrompt: CONSOLIDATE_SYSTEM,
     userPrompt,
     temperature: 0.3,
@@ -111,18 +107,16 @@ export async function consolidateDigest(opts: {
 
 export async function recordCorrection(opts: {
   apiKey: string;
-  model: string;
   request: string;
   draft: string;
   rewrite: string;
   note?: string;
   forceDigestOverwrite?: boolean;
 }): Promise<{ correction: Correction }> {
-  const { apiKey, model, request, draft, rewrite, note, forceDigestOverwrite } = opts;
+  const { apiKey, request, draft, rewrite, note, forceDigestOverwrite } = opts;
 
   const lessons = await extractLessons({
     apiKey,
-    model,
     request,
     draft,
     rewrite,
@@ -144,7 +138,6 @@ export async function recordCorrection(opts: {
   const log = await loadCorrections();
   const digest = await consolidateDigest({
     apiKey,
-    model,
     corrections: log.corrections,
   });
 

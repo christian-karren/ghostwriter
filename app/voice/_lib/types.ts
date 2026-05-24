@@ -18,7 +18,6 @@ export type Sample = SampleMeta & { content: string };
 
 export type Settings = {
   apiKey: string;
-  model: string;
   temperature: number;
   onboardingComplete: boolean;
 };

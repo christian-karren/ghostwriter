@@ -7,7 +7,6 @@ use crate::paths::DataRoot;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Settings {
-    pub model: String,
     pub temperature: f64,
     #[serde(default)]
     pub onboarding_complete: bool,
@@ -16,7 +15,6 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            model: "gemini-2.5-pro".to_string(),
             temperature: 0.7,
             onboarding_complete: false,
         }

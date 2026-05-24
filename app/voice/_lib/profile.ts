@@ -1,6 +1,6 @@
 "use client";
 
-import { generateText } from "./gemini";
+import { DEFAULT_MODEL, generateText } from "./gemini";
 import type { Sample, VoiceProfile } from "./types";
 
 const PROFILE_SYSTEM = `You are analyzing a writer's samples to build a precise style profile for another model to use as an imitation guide.
@@ -22,10 +22,9 @@ Output ONLY the profile. No preamble. No section headers. No meta-commentary abo
 
 export async function extractVoiceProfile(opts: {
   apiKey: string;
-  model: string;
   samples: Sample[];
 }): Promise<VoiceProfile> {
-  const { apiKey, model, samples } = opts;
+  const { apiKey, samples } = opts;
 
   if (samples.length === 0) {
     throw new Error("No samples to analyze. Add at least one writing sample first.");
@@ -37,7 +36,6 @@ export async function extractVoiceProfile(opts: {
 
   const result = await generateText({
     apiKey,
-    model,
     systemPrompt: PROFILE_SYSTEM,
     userPrompt: sampleText,
     temperature: 0.4,
@@ -48,7 +46,7 @@ export async function extractVoiceProfile(opts: {
     profile: result.text.trim(),
     sampleIds: samples.map((s) => s.id),
     generatedAt: Date.now(),
-    model,
+    model: DEFAULT_MODEL,
   };
 }
 

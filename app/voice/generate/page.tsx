@@ -16,7 +16,7 @@ import {
   SecondaryButton,
   textareaClass,
 } from "../_components/ui";
-import { generateText } from "../_lib/gemini";
+import { DEFAULT_MODEL, generateText } from "../_lib/gemini";
 import { buildRetryPrompt, buildSystemPrompt, buildUserPrompt } from "../_lib/prompt";
 import { archiveGeneration, hydrateSamples } from "../_lib/storage";
 import { recordCorrection } from "../_lib/corrections";
@@ -124,7 +124,6 @@ export default function GeneratePage() {
 
       const first = await generateText({
         apiKey: settings.apiKey,
-        model: settings.model,
         systemPrompt,
         userPrompt,
         temperature: settings.temperature,
@@ -146,7 +145,7 @@ export default function GeneratePage() {
           violationsV1: [],
           finalText: first.text,
           meta: {
-            model: settings.model,
+            model: DEFAULT_MODEL,
             temperature: settings.temperature,
             finishReason: first.finishReason,
             ms: elapsed,
@@ -161,7 +160,6 @@ export default function GeneratePage() {
       const retryPrompt = buildRetryPrompt(request, source, first.text, firstViolations);
       const second = await generateText({
         apiKey: settings.apiKey,
-        model: settings.model,
         systemPrompt,
         userPrompt: retryPrompt,
         temperature: settings.temperature,
@@ -193,7 +191,7 @@ export default function GeneratePage() {
         violationsV2: secondViolations,
         finalText: winner.text,
         meta: {
-          model: settings.model,
+          model: DEFAULT_MODEL,
           temperature: settings.temperature,
           finishReason: winner.finishReason,
           ms: elapsed,
@@ -245,7 +243,6 @@ export default function GeneratePage() {
     try {
       const { correction } = await recordCorrection({
         apiKey: settings.apiKey,
-        model: settings.model,
         request: lastRequest,
         draft: output,
         rewrite: rewriteText,
@@ -277,7 +274,7 @@ export default function GeneratePage() {
         violationsV1: violations,
         finalText: output,
         meta: {
-          model: settings.model,
+          model: DEFAULT_MODEL,
           temperature: settings.temperature,
           finishReason: "COPIED",
           ms: 0,

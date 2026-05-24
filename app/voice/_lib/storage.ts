@@ -15,7 +15,6 @@ import type {
 
 const DEFAULT_SETTINGS: Settings = {
   apiKey: "",
-  model: "gemini-2.5-pro",
   temperature: 0.7,
   onboardingComplete: false,
 };
@@ -83,14 +82,13 @@ export async function deleteSample(id: string): Promise<void> {
 
 export async function loadSettings(): Promise<Settings> {
   const [base, apiKey] = await Promise.all([
-    invoke<{ model: string; temperature: number; onboardingComplete?: boolean }>(
+    invoke<{ temperature: number; onboardingComplete?: boolean }>(
       "read_settings",
     ),
     invoke<string | null>("get_api_key"),
   ]);
   return {
     ...DEFAULT_SETTINGS,
-    model: base.model || DEFAULT_SETTINGS.model,
     temperature:
       typeof base.temperature === "number"
         ? base.temperature
@@ -104,7 +102,6 @@ export async function saveSettings(s: Settings): Promise<void> {
   const tasks: Promise<unknown>[] = [
     invoke("write_settings", {
       settings: {
-        model: s.model,
         temperature: s.temperature,
         onboardingComplete: s.onboardingComplete,
       },

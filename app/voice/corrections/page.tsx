@@ -51,7 +51,6 @@ export default function CorrectionsPage() {
     try {
       const digest = await consolidateDigest({
         apiKey: settings.apiKey,
-        model: settings.model,
         corrections: log.corrections,
       });
       await saveCorrectionsDigest({

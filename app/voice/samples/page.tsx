@@ -100,7 +100,6 @@ export default function SamplesPage() {
       const full = await hydrateSamples(samples);
       const next = await extractVoiceProfile({
         apiKey: settings.apiKey,
-        model: settings.model,
         samples: full,
       });
       await saveProfile(next, profile?.userEdited ? true : false);

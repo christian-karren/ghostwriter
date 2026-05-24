@@ -14,14 +14,6 @@ import {
   inputClass,
 } from "../_components/ui";
 
-const MODEL_OPTIONS = [
-  { value: "gemini-2.0-flash", label: "Gemini 2.0 Flash", note: "Free tier, fast" },
-  { value: "gemini-2.0-flash-lite", label: "Gemini 2.0 Flash Lite", note: "Fastest" },
-  { value: "gemini-2.5-flash", label: "Gemini 2.5 Flash", note: "Newer, if available" },
-  { value: "gemini-2.5-pro", label: "Gemini 2.5 Pro", note: "Slower, smarter" },
-  { value: "gemini-1.5-flash", label: "Gemini 1.5 Flash", note: "Legacy fallback" },
-];
-
 export default function SettingsPage() {
   const { settings, refreshSettings } = useData();
   const [draft, setDraft] = useState<Settings>(settings);
@@ -98,39 +90,6 @@ export default function SettingsPage() {
           </a>
           . Sign in with a Google account and click &ldquo;Create API key&rdquo;.
         </Hint>
-      </Card>
-
-      <Card className="space-y-4">
-        <div className="space-y-0.5">
-          <h2 className="text-[14px] font-medium tracking-tight2">Model</h2>
-          <p className="text-[12px] text-muted">
-            If one errors out, try another. Google rotates availability.
-          </p>
-        </div>
-        <div className="grid sm:grid-cols-2 gap-2">
-          {MODEL_OPTIONS.map((m) => {
-            const active = draft.model === m.value;
-            return (
-              <button
-                key={m.value}
-                onClick={() => update({ model: m.value })}
-                className={`text-left rounded-xl border px-3.5 py-3 transition-all ${
-                  active
-                    ? "border-accent/40 bg-accent-soft ring-2 ring-accent/15"
-                    : "border-hairline hover:border-hairline-strong hover:bg-surface"
-                }`}
-              >
-                <div className="flex items-center justify-between">
-                  <span className="text-[13.5px] font-medium tracking-tight2">{m.label}</span>
-                  {active && (
-                    <span className="inline-block h-1.5 w-1.5 rounded-full bg-accent" />
-                  )}
-                </div>
-                <p className="mt-1 text-[11.5px] text-muted">{m.note}</p>
-              </button>
-            );
-          })}
-        </div>
       </Card>
 
       <Card className="space-y-4">
