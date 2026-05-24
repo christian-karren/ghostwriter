@@ -6,9 +6,16 @@
     "dev": "next dev --turbopack",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "tauri": "tauri",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build",
+    "postinstall": "node scripts/copy-pdfjs-worker.mjs"
   },
   "dependencies": {
+    "@tauri-apps/api": "^2.11.0",
+    "@tauri-apps/plugin-dialog": "^2.7.1",
+    "@tauri-apps/plugin-opener": "^2.5.4",
     "next": "15.1.6",
     "pdfjs-dist": "^5.7.284",
     "react": "^19.0.0",
@@ -16,6 +23,7 @@
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3",
+    "@tauri-apps/cli": "^2.11.2",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",

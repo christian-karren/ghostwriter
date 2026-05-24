@@ -52,7 +52,7 @@ export async function extractVoiceProfile(opts: {
   };
 }
 
-export function isProfileStale(profile: VoiceProfile, samples: Sample[]): boolean {
+export function isProfileStale(profile: VoiceProfile, samples: { id: string }[]): boolean {
   const currentIds = new Set(samples.map((s) => s.id));
   const profileIds = new Set(profile.sampleIds);
   if (currentIds.size !== profileIds.size) return true;

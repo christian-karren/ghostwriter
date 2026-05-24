@@ -4,10 +4,7 @@ type PdfTextItem = { str?: string; hasEOL?: boolean };
 
 export async function extractPdfText(file: File): Promise<string> {
   const pdfjsLib = await import("pdfjs-dist");
-  pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
-    "pdfjs-dist/build/pdf.worker.min.mjs",
-    import.meta.url,
-  ).toString();
+  pdfjsLib.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
 
   const buffer = await file.arrayBuffer();
   const doc = await pdfjsLib.getDocument({ data: buffer }).promise;

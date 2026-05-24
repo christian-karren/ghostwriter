@@ -1,13 +1,16 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { loadSettings, saveSettings } from "../_lib/storage";
+import { useState } from "react";
+
+import { openDataDir, saveSettings } from "../_lib/storage";
+import { useData } from "../_lib/DataProvider";
 import type { Settings } from "../_lib/types";
 import {
   Card,
   FieldLabel,
   Hint,
   PageHeader,
+  SecondaryButton,
   inputClass,
 } from "../_components/ui";
 
@@ -20,29 +23,18 @@ const MODEL_OPTIONS = [
 ];
 
 export default function SettingsPage() {
-  const [settings, setSettings] = useState<Settings | null>(null);
+  const { settings, refreshSettings } = useData();
+  const [draft, setDraft] = useState<Settings>(settings);
   const [revealKey, setRevealKey] = useState(false);
   const [saved, setSaved] = useState(false);
 
-  useEffect(() => {
-    setSettings(loadSettings());
-  }, []);
-
-  function update(patch: Partial<Settings>) {
-    if (!settings) return;
-    const next = { ...settings, ...patch };
-    setSettings(next);
-    saveSettings(next);
+  async function update(patch: Partial<Settings>) {
+    const next = { ...draft, ...patch };
+    setDraft(next);
+    await saveSettings(next);
+    await refreshSettings();
     setSaved(true);
     window.setTimeout(() => setSaved(false), 1200);
-  }
-
-  if (!settings) {
-    return (
-      <div className="pt-14 pb-16">
-        <p className="text-[14px] text-muted">Loading…</p>
-      </div>
-    );
   }
 
   return (
@@ -52,8 +44,8 @@ export default function SettingsPage() {
         title="Your configuration"
         description={
           <>
-            Everything lives in your browser&apos;s localStorage. Nothing leaves your machine
-            except calls to the Gemini API itself.
+            The Gemini API key is stored in your macOS Keychain. Everything else lives
+            on disk in your app data folder.
           </>
         }
       />
@@ -62,7 +54,9 @@ export default function SettingsPage() {
         <div className="flex items-baseline justify-between">
           <div className="space-y-0.5">
             <h2 className="text-[14px] font-medium tracking-tight2">Gemini API key</h2>
-            <p className="text-[12px] text-muted">Required. Stored only in your browser.</p>
+            <p className="text-[12px] text-muted">
+              Required. Stored in macOS Keychain, never on disk.
+            </p>
           </div>
           {saved && (
             <span className="inline-flex items-center gap-1.5 text-[11.5px] text-accent">
@@ -77,7 +71,7 @@ export default function SettingsPage() {
             <input
               id="api-key"
               type={revealKey ? "text" : "password"}
-              value={settings.apiKey}
+              value={draft.apiKey}
               onChange={(e) => update({ apiKey: e.target.value.trim() })}
               placeholder="AIza..."
               spellCheck={false}
@@ -115,7 +109,7 @@ export default function SettingsPage() {
         </div>
         <div className="grid sm:grid-cols-2 gap-2">
           {MODEL_OPTIONS.map((m) => {
-            const active = settings.model === m.value;
+            const active = draft.model === m.value;
             return (
               <button
                 key={m.value}
@@ -148,7 +142,7 @@ export default function SettingsPage() {
             </p>
           </div>
           <span className="font-mono text-[14px] tabular-nums text-foreground/90">
-            {settings.temperature.toFixed(2)}
+            {draft.temperature.toFixed(2)}
           </span>
         </div>
         <input
@@ -156,7 +150,7 @@ export default function SettingsPage() {
           min={0}
           max={1}
           step={0.05}
-          value={settings.temperature}
+          value={draft.temperature}
           onChange={(e) => update({ temperature: Number(e.target.value) })}
           className="w-full accent-[var(--accent)]"
         />
@@ -164,6 +158,20 @@ export default function SettingsPage() {
           <span>0.00</span>
           <span>0.50</span>
           <span>1.00</span>
+        </div>
+      </Card>
+
+      <Card className="space-y-4">
+        <div className="space-y-0.5">
+          <h2 className="text-[14px] font-medium tracking-tight2">Your data folder</h2>
+          <p className="text-[12px] text-muted">
+            Samples, voice profile, corrections, and generation history all live on disk
+            as plain files. Edit them in your favorite editor, run git on the folder,
+            back them up however you want.
+          </p>
+        </div>
+        <div>
+          <SecondaryButton onClick={openDataDir}>Open data folder</SecondaryButton>
         </div>
       </Card>
     </div>

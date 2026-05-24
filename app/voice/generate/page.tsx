@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
+
 import { HighlightedOutput } from "../_components/HighlightedOutput";
 import {
   AccentButton,
@@ -17,22 +18,11 @@ import {
 } from "../_components/ui";
 import { generateText } from "../_lib/gemini";
 import { buildRetryPrompt, buildSystemPrompt, buildUserPrompt } from "../_lib/prompt";
-import {
-  loadCorrections,
-  loadProfile,
-  loadSamples,
-  loadSettings,
-  saveCorrections,
-} from "../_lib/storage";
+import { archiveGeneration, hydrateSamples } from "../_lib/storage";
 import { recordCorrection } from "../_lib/corrections";
 import { findViolations, summarizeViolations } from "../_lib/styleGuard";
-import type {
-  CorrectionsLog,
-  Sample,
-  Settings,
-  VoiceProfile,
-  Violation,
-} from "../_lib/types";
+import { useData } from "../_lib/DataProvider";
+import type { Sample, Violation } from "../_lib/types";
 
 type Status =
   | { state: "idle" }
@@ -45,16 +35,21 @@ const LOW_SAMPLE_WORDS = 300;
 const TRUNCATION_REASONS = new Set(["MAX_TOKENS", "LENGTH"]);
 
 export default function GeneratePage() {
-  const [samples, setSamples] = useState<Sample[]>([]);
-  const [settings, setSettings] = useState<Settings | null>(null);
-  const [profile, setProfile] = useState<VoiceProfile | null>(null);
-  const [corrections, setCorrections] = useState<CorrectionsLog | null>(null);
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const {
+    samples,
+    settings,
+    profile,
+    corrections,
+    refreshCorrections,
+  } = useData();
+
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set(samples.map((s) => s.id)));
   const [request, setRequest] = useState("");
   const [source, setSource] = useState("");
   const [status, setStatus] = useState<Status>({ state: "idle" });
   const [output, setOutput] = useState("");
   const [lastRequest, setLastRequest] = useState("");
+  const [lastSource, setLastSource] = useState("");
   const [violations, setViolations] = useState<Violation[]>([]);
   const [retried, setRetried] = useState(false);
   const [truncated, setTruncated] = useState(false);
@@ -68,16 +63,7 @@ export default function GeneratePage() {
     lessons?: string[];
   }>({ state: "idle" });
 
-  useEffect(() => {
-    const s = loadSamples();
-    setSamples(s);
-    setSelectedIds(new Set(s.map((x) => x.id)));
-    setSettings(loadSettings());
-    setProfile(loadProfile());
-    setCorrections(loadCorrections());
-  }, []);
-
-  const selectedSamples = useMemo(
+  const selectedMetas = useMemo(
     () => samples.filter((s) => selectedIds.has(s.id)),
     [samples, selectedIds],
   );
@@ -100,7 +86,6 @@ export default function GeneratePage() {
   }
 
   async function handleGenerate() {
-    if (!settings) return;
     if (!settings.apiKey) {
       setStatus({
         state: "error",
@@ -123,14 +108,19 @@ export default function GeneratePage() {
     setRewriteStatus({ state: "idle" });
     setStatus({ state: "generating" });
 
+    const startedAt = performance.now();
+
     try {
+      const fullSamples: Sample[] = await hydrateSamples(selectedMetas);
+
       const systemPrompt = buildSystemPrompt(
-        selectedSamples,
+        fullSamples,
         profile?.profile,
-        corrections?.digest,
+        corrections.digest,
       );
       const userPrompt = buildUserPrompt(request, source);
       setLastRequest(request);
+      setLastSource(source);
 
       const first = await generateText({
         apiKey: settings.apiKey,
@@ -143,10 +133,27 @@ export default function GeneratePage() {
       const firstViolations = findViolations(first.text);
 
       if (firstViolations.length === 0) {
+        const elapsed = Math.round(performance.now() - startedAt);
         setOutput(first.text);
         setViolations([]);
         setTruncated(TRUNCATION_REASONS.has(first.finishReason));
         setStatus({ state: "done" });
+        archiveGeneration({
+          request,
+          source,
+          systemPrompt,
+          draftV1: first.text,
+          violationsV1: [],
+          finalText: first.text,
+          meta: {
+            model: settings.model,
+            temperature: settings.temperature,
+            finishReason: first.finishReason,
+            ms: elapsed,
+            accepted: false,
+            retried: false,
+          },
+        }).catch((err) => console.error("archive failed", err));
         return;
       }
 
@@ -168,12 +175,32 @@ export default function GeneratePage() {
 
       const winner = useSecond ? second : first;
       const winnerViolations = useSecond ? secondViolations : firstViolations;
+      const elapsed = Math.round(performance.now() - startedAt);
 
       setOutput(winner.text);
       setViolations(winnerViolations);
       setRetried(true);
       setTruncated(TRUNCATION_REASONS.has(winner.finishReason));
       setStatus({ state: "done" });
+
+      archiveGeneration({
+        request,
+        source,
+        systemPrompt,
+        draftV1: first.text,
+        violationsV1: firstViolations,
+        draftV2: second.text,
+        violationsV2: secondViolations,
+        finalText: winner.text,
+        meta: {
+          model: settings.model,
+          temperature: settings.temperature,
+          finishReason: winner.finishReason,
+          ms: elapsed,
+          accepted: false,
+          retried: true,
+        },
+      }).catch((err) => console.error("archive failed", err));
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       setStatus({ state: "error", message });
@@ -193,7 +220,7 @@ export default function GeneratePage() {
   }
 
   async function submitRewrite() {
-    if (!settings?.apiKey) {
+    if (!settings.apiKey) {
       setRewriteStatus({
         state: "error",
         message: "No Gemini API key. Add one in Settings.",
@@ -216,18 +243,15 @@ export default function GeneratePage() {
     }
     setRewriteStatus({ state: "submitting" });
     try {
-      const currentLog = corrections ?? loadCorrections();
-      const { correction, log: nextLog } = await recordCorrection({
+      const { correction } = await recordCorrection({
         apiKey: settings.apiKey,
         model: settings.model,
-        log: currentLog,
         request: lastRequest,
         draft: output,
         rewrite: rewriteText,
         note: rewriteNote,
       });
-      saveCorrections(nextLog);
-      setCorrections(nextLog);
+      await refreshCorrections();
       setRewriteStatus({
         state: "done",
         lessons: correction.lessons,
@@ -244,19 +268,32 @@ export default function GeneratePage() {
     await navigator.clipboard.writeText(output);
     setCopied(true);
     window.setTimeout(() => setCopied(false), 1200);
+    if (lastRequest) {
+      archiveGeneration({
+        request: lastRequest,
+        source: lastSource,
+        systemPrompt: "(see paired draft folder)",
+        draftV1: output,
+        violationsV1: violations,
+        finalText: output,
+        meta: {
+          model: settings.model,
+          temperature: settings.temperature,
+          finishReason: "COPIED",
+          ms: 0,
+          accepted: true,
+          retried,
+        },
+      }).catch((err) => console.error("archive accept failed", err));
+    }
   }
 
-  const hasKey = settings?.apiKey?.length ? true : false;
+  const hasKey = settings.apiKey.length > 0;
   const hasSamples = samples.length > 0;
-  const selectedWordCount = selectedSamples.reduce(
-    (acc, s) => acc + s.content.split(/\s+/).filter(Boolean).length,
-    0,
-  );
+  const selectedWordCount = selectedMetas.reduce((acc, s) => acc + s.wordCount, 0);
   const lowSampleVolume = hasSamples && selectedWordCount < LOW_SAMPLE_WORDS;
   const isWorking = status.state === "generating" || status.state === "retrying";
-  const outputWordCount = output
-    ? output.split(/\s+/).filter(Boolean).length
-    : 0;
+  const outputWordCount = output ? output.split(/\s+/).filter(Boolean).length : 0;
 
   return (
     <div className="pt-14 pb-16 space-y-10">
@@ -281,15 +318,13 @@ export default function GeneratePage() {
               >
                 View on Samples
               </Link>
-              {corrections && corrections.corrections.length > 0 && (
+              {corrections.corrections.length > 0 && (
                 <>
                   <span className="text-muted">·</span>
                   <span className="inline-flex items-center gap-1.5 text-accent">
                     <span className="inline-block h-1.5 w-1.5 rounded-full bg-accent" />
                     {corrections.corrections.length}{" "}
-                    {corrections.corrections.length === 1
-                      ? "correction"
-                      : "corrections"}{" "}
+                    {corrections.corrections.length === 1 ? "correction" : "corrections"}{" "}
                     learned
                   </span>
                 </>
@@ -399,7 +434,7 @@ export default function GeneratePage() {
                       />
                       <span className="flex-1">{s.name}</span>
                       <span className="font-mono text-[11px] text-muted">
-                        {s.content.split(/\s+/).filter(Boolean).length} words
+                        {s.wordCount} words
                       </span>
                     </label>
                   </li>

@@ -1,11 +1,24 @@
 "use client";
 
-import type { CorrectionsLog, Sample, Settings, VoiceProfile } from "./types";
+import { invoke } from "@tauri-apps/api/core";
 
-const SAMPLES_KEY = "voice.samples.v1";
-const SETTINGS_KEY = "voice.settings.v1";
-const PROFILE_KEY = "voice.profile.v1";
-const CORRECTIONS_KEY = "voice.corrections.v1";
+import type {
+  ArchiveGenerationInput,
+  Correction,
+  CorrectionsLog,
+  Sample,
+  SampleKind,
+  SampleMeta,
+  Settings,
+  VoiceProfile,
+} from "./types";
+
+const DEFAULT_SETTINGS: Settings = {
+  apiKey: "",
+  model: "gemini-2.5-pro",
+  temperature: 0.7,
+  onboardingComplete: false,
+};
 
 const EMPTY_CORRECTIONS: CorrectionsLog = {
   corrections: [],
@@ -13,124 +26,223 @@ const EMPTY_CORRECTIONS: CorrectionsLog = {
   digestUpdatedAt: 0,
 };
 
-const DEFAULT_SETTINGS: Settings = {
-  apiKey: "",
-  model: "gemini-2.0-flash",
-  temperature: 0.7,
+/* samples */
+
+export async function loadSamples(): Promise<SampleMeta[]> {
+  return invoke<SampleMeta[]>("list_samples");
+}
+
+export async function readSample(id: string): Promise<Sample> {
+  const { meta, text } = await invoke<{ meta: SampleMeta; text: string }>(
+    "read_sample",
+    { id },
+  );
+  return { ...meta, content: text };
+}
+
+export async function hydrateSamples(metas: SampleMeta[]): Promise<Sample[]> {
+  return Promise.all(metas.map((m) => readSample(m.id)));
+}
+
+export async function addSample(opts: {
+  name: string;
+  kind: SampleKind;
+  bytes: Uint8Array;
+  mimeType?: string | null;
+  extractedText?: string | null;
+}): Promise<SampleMeta> {
+  return invoke<SampleMeta>("add_sample", {
+    input: {
+      name: opts.name,
+      kind: opts.kind,
+      bytes: Array.from(opts.bytes),
+      mimeType: opts.mimeType ?? null,
+      extractedText: opts.extractedText ?? null,
+    },
+  });
+}
+
+export async function updateSample(
+  id: string,
+  patch: { name?: string; text?: string },
+): Promise<SampleMeta> {
+  return invoke<SampleMeta>("update_sample", {
+    id,
+    input: {
+      name: patch.name ?? null,
+      text: patch.text ?? null,
+    },
+  });
+}
+
+export async function deleteSample(id: string): Promise<void> {
+  await invoke("delete_sample", { id });
+}
+
+/* settings */
+
+export async function loadSettings(): Promise<Settings> {
+  const [base, apiKey] = await Promise.all([
+    invoke<{ model: string; temperature: number; onboardingComplete?: boolean }>(
+      "read_settings",
+    ),
+    invoke<string | null>("get_api_key"),
+  ]);
+  return {
+    ...DEFAULT_SETTINGS,
+    model: base.model || DEFAULT_SETTINGS.model,
+    temperature:
+      typeof base.temperature === "number"
+        ? base.temperature
+        : DEFAULT_SETTINGS.temperature,
+    onboardingComplete: base.onboardingComplete ?? false,
+    apiKey: apiKey ?? "",
+  };
+}
+
+export async function saveSettings(s: Settings): Promise<void> {
+  const tasks: Promise<unknown>[] = [
+    invoke("write_settings", {
+      settings: {
+        model: s.model,
+        temperature: s.temperature,
+        onboardingComplete: s.onboardingComplete,
+      },
+    }),
+  ];
+  tasks.push(
+    s.apiKey
+      ? invoke("set_api_key", { value: s.apiKey })
+      : invoke("delete_api_key"),
+  );
+  await Promise.all(tasks);
+}
+
+/* profile */
+
+type ProfileMetaRaw = {
+  model: string | null;
+  generatedAt: number | null;
+  sourceSampleIds: string[];
+  lastMachineHash: string | null;
 };
 
-function isBrowser(): boolean {
-  return typeof window !== "undefined" && typeof window.localStorage !== "undefined";
-}
+type ProfileReadRaw = {
+  markdown: string;
+  meta: ProfileMetaRaw;
+  userEdited: boolean;
+  exists: boolean;
+};
 
-export function loadSamples(): Sample[] {
-  if (!isBrowser()) return [];
-  try {
-    const raw = window.localStorage.getItem(SAMPLES_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw) as Sample[];
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-}
-
-export function saveSamples(samples: Sample[]): void {
-  if (!isBrowser()) return;
-  window.localStorage.setItem(SAMPLES_KEY, JSON.stringify(samples));
-}
-
-export function addSample(name: string, content: string): Sample {
-  const samples = loadSamples();
-  const now = Date.now();
-  const sample: Sample = {
-    id: crypto.randomUUID(),
-    name: name.trim() || "Untitled",
-    content: content.trim(),
-    createdAt: now,
-    updatedAt: now,
+export async function loadProfile(): Promise<VoiceProfile | null> {
+  const res = await invoke<ProfileReadRaw>("read_profile");
+  if (!res.exists || !res.markdown.trim()) return null;
+  return {
+    profile: res.markdown,
+    sampleIds: res.meta.sourceSampleIds ?? [],
+    generatedAt: res.meta.generatedAt ?? 0,
+    model: res.meta.model ?? "",
+    userEdited: res.userEdited,
   };
-  saveSamples([sample, ...samples]);
-  return sample;
 }
 
-export function updateSample(id: string, patch: Partial<Pick<Sample, "name" | "content">>): void {
-  const samples = loadSamples();
-  const next = samples.map((s) =>
-    s.id === id ? { ...s, ...patch, updatedAt: Date.now() } : s,
-  );
-  saveSamples(next);
+export async function saveProfile(
+  p: VoiceProfile,
+  force = false,
+): Promise<void> {
+  await invoke("write_profile", {
+    input: {
+      markdown: p.profile,
+      meta: {
+        model: p.model || null,
+        generatedAt: p.generatedAt || null,
+        sourceSampleIds: p.sampleIds,
+      },
+      force,
+    },
+  });
 }
 
-export function deleteSample(id: string): void {
-  const samples = loadSamples().filter((s) => s.id !== id);
-  saveSamples(samples);
+export async function clearProfile(): Promise<void> {
+  await invoke("clear_profile");
 }
 
-export function loadSettings(): Settings {
-  if (!isBrowser()) return DEFAULT_SETTINGS;
-  try {
-    const raw = window.localStorage.getItem(SETTINGS_KEY);
-    if (!raw) return DEFAULT_SETTINGS;
-    const parsed = JSON.parse(raw) as Partial<Settings>;
-    return { ...DEFAULT_SETTINGS, ...parsed };
-  } catch {
-    return DEFAULT_SETTINGS;
-  }
+/* corrections */
+
+type DigestReadRaw = {
+  markdown: string;
+  meta: { generatedAt: number | null; sourceCorrectionIds: string[]; lastMachineHash: string | null };
+  userEdited: boolean;
+  exists: boolean;
+};
+
+export async function loadCorrections(): Promise<CorrectionsLog> {
+  const [list, digest] = await Promise.all([
+    invoke<Correction[]>("list_corrections"),
+    invoke<DigestReadRaw>("read_corrections_digest"),
+  ]);
+  return {
+    corrections: list,
+    digest: digest.exists ? digest.markdown : "",
+    digestUpdatedAt: digest.meta.generatedAt ?? 0,
+    digestUserEdited: digest.userEdited,
+  };
 }
 
-export function saveSettings(settings: Settings): void {
-  if (!isBrowser()) return;
-  window.localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+export async function appendCorrection(c: Correction): Promise<Correction> {
+  return invoke<Correction>("append_correction", { correction: c });
 }
 
-export function loadProfile(): VoiceProfile | null {
-  if (!isBrowser()) return null;
-  try {
-    const raw = window.localStorage.getItem(PROFILE_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as VoiceProfile;
-    if (typeof parsed.profile !== "string") return null;
-    return parsed;
-  } catch {
-    return null;
-  }
+export async function deleteCorrection(id: string): Promise<void> {
+  await invoke("delete_correction", { id });
 }
 
-export function saveProfile(profile: VoiceProfile): void {
-  if (!isBrowser()) return;
-  window.localStorage.setItem(PROFILE_KEY, JSON.stringify(profile));
+export async function saveCorrectionsDigest(opts: {
+  markdown: string;
+  sourceCorrectionIds: string[];
+  force?: boolean;
+}): Promise<void> {
+  await invoke("write_corrections_digest", {
+    input: {
+      markdown: opts.markdown,
+      meta: { sourceCorrectionIds: opts.sourceCorrectionIds },
+      force: opts.force ?? false,
+    },
+  });
 }
 
-export function clearProfile(): void {
-  if (!isBrowser()) return;
-  window.localStorage.removeItem(PROFILE_KEY);
+export async function clearCorrections(): Promise<void> {
+  const list = await invoke<Correction[]>("list_corrections");
+  await Promise.all(list.map((c) => deleteCorrection(c.id)));
+  await saveCorrectionsDigest({ markdown: "", sourceCorrectionIds: [], force: true });
 }
 
-export function loadCorrections(): CorrectionsLog {
-  if (!isBrowser()) return EMPTY_CORRECTIONS;
-  try {
-    const raw = window.localStorage.getItem(CORRECTIONS_KEY);
-    if (!raw) return EMPTY_CORRECTIONS;
-    const parsed = JSON.parse(raw) as CorrectionsLog;
-    if (!Array.isArray(parsed.corrections)) return EMPTY_CORRECTIONS;
-    return {
-      corrections: parsed.corrections,
-      digest: typeof parsed.digest === "string" ? parsed.digest : "",
-      digestUpdatedAt:
-        typeof parsed.digestUpdatedAt === "number" ? parsed.digestUpdatedAt : 0,
-    };
-  } catch {
-    return EMPTY_CORRECTIONS;
-  }
+export function emptyCorrections(): CorrectionsLog {
+  return { ...EMPTY_CORRECTIONS };
 }
 
-export function saveCorrections(log: CorrectionsLog): void {
-  if (!isBrowser()) return;
-  window.localStorage.setItem(CORRECTIONS_KEY, JSON.stringify(log));
+/* history */
+
+export async function archiveGeneration(
+  input: ArchiveGenerationInput,
+): Promise<string> {
+  return invoke<string>("archive_generation", {
+    input: {
+      request: input.request,
+      source: input.source ?? null,
+      systemPrompt: input.systemPrompt,
+      draftV1: input.draftV1,
+      violationsV1: input.violationsV1,
+      draftV2: input.draftV2 ?? null,
+      violationsV2: input.violationsV2 ?? null,
+      finalText: input.finalText,
+      meta: input.meta,
+    },
+  });
 }
 
-export function clearCorrections(): void {
-  if (!isBrowser()) return;
-  window.localStorage.removeItem(CORRECTIONS_KEY);
+/* misc */
+
+export async function openDataDir(): Promise<void> {
+  await invoke("open_data_dir");
 }

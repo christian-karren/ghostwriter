@@ -1,7 +1,12 @@
 "use client";
 
 import { generateText } from "./gemini";
-import type { Correction, CorrectionsLog } from "./types";
+import {
+  appendCorrection,
+  loadCorrections,
+  saveCorrectionsDigest,
+} from "./storage";
+import type { Correction } from "./types";
 
 const EXTRACT_SYSTEM = `You are analyzing a writer's correction to an AI draft. Your job is to extract concrete, actionable style lessons that a future model can apply when writing for this user.
 
@@ -107,13 +112,13 @@ export async function consolidateDigest(opts: {
 export async function recordCorrection(opts: {
   apiKey: string;
   model: string;
-  log: CorrectionsLog;
   request: string;
   draft: string;
   rewrite: string;
   note?: string;
-}): Promise<{ correction: Correction; log: CorrectionsLog }> {
-  const { apiKey, model, log, request, draft, rewrite, note } = opts;
+  forceDigestOverwrite?: boolean;
+}): Promise<{ correction: Correction }> {
+  const { apiKey, model, request, draft, rewrite, note, forceDigestOverwrite } = opts;
 
   const lessons = await extractLessons({
     apiKey,
@@ -134,21 +139,22 @@ export async function recordCorrection(opts: {
     lessons,
   };
 
-  const nextCorrections = [correction, ...log.corrections];
+  await appendCorrection(correction);
 
+  const log = await loadCorrections();
   const digest = await consolidateDigest({
     apiKey,
     model,
-    corrections: nextCorrections,
+    corrections: log.corrections,
   });
 
-  const nextLog: CorrectionsLog = {
-    corrections: nextCorrections,
-    digest,
-    digestUpdatedAt: Date.now(),
-  };
+  await saveCorrectionsDigest({
+    markdown: digest,
+    sourceCorrectionIds: log.corrections.map((c) => c.id),
+    force: forceDigestOverwrite || log.digestUserEdited === true,
+  });
 
-  return { correction, log: nextLog };
+  return { correction };
 }
 
 function parseLessons(raw: string): string[] {
@@ -179,14 +185,4 @@ export function formatRelativeTime(timestamp: number): string {
   if (days < 30) return `${days} day${days === 1 ? "" : "s"} ago`;
   const months = Math.floor(days / 30);
   return `${months} month${months === 1 ? "" : "s"} ago`;
-}
-
-export function removeCorrection(
-  log: CorrectionsLog,
-  id: string,
-): CorrectionsLog {
-  return {
-    ...log,
-    corrections: log.corrections.filter((c) => c.id !== id),
-  };
 }

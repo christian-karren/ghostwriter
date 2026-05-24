@@ -1,23 +1,23 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import type { Sample, Settings, VoiceProfile } from "../_lib/types";
+import { useEffect, useMemo, useRef, useState } from "react";
+
 import {
   addSample,
   clearProfile,
   deleteSample,
-  loadProfile,
-  loadSamples,
-  loadSettings,
+  hydrateSamples,
   saveProfile,
   updateSample,
 } from "../_lib/storage";
+import { useData } from "../_lib/DataProvider";
 import { extractPdfText, isPdfFile } from "../_lib/pdf";
 import {
   extractVoiceProfile,
   formatRelativeTime,
   isProfileStale,
 } from "../_lib/profile";
+import type { Sample } from "../_lib/types";
 import {
   Banner,
   Card,
@@ -32,15 +32,18 @@ import {
   textareaClass,
 } from "../_components/ui";
 
+const PREVIEW_LEN = 320;
+
 export default function SamplesPage() {
-  const [samples, setSamples] = useState<Sample[]>([]);
-  const [settings, setSettings] = useState<Settings | null>(null);
-  const [profile, setProfile] = useState<VoiceProfile | null>(null);
+  const { samples, settings, profile, refreshSamples, refreshProfile } = useData();
+
+  const [hydrated, setHydrated] = useState<Map<string, string>>(new Map());
   const [name, setName] = useState("");
   const [content, setContent] = useState("");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState("");
   const [editContent, setEditContent] = useState("");
+  const [editLoading, setEditLoading] = useState(false);
   const [uploadStatus, setUploadStatus] = useState<{
     state: "idle" | "processing" | "error" | "warn";
     message?: string;
@@ -56,17 +59,29 @@ export default function SamplesPage() {
   const isExtractingProfile = profileStatus.state === "extracting";
 
   useEffect(() => {
-    setSamples(loadSamples());
-    setSettings(loadSettings());
-    setProfile(loadProfile());
-  }, []);
-
-  function refresh() {
-    setSamples(loadSamples());
-  }
+    let cancelled = false;
+    (async () => {
+      const ids = samples.map((s) => s.id);
+      const missing = ids.filter((id) => !hydrated.has(id));
+      if (missing.length === 0) return;
+      const metaToHydrate = samples.filter((s) => missing.includes(s.id));
+      const hydratedSamples = await hydrateSamples(metaToHydrate);
+      if (cancelled) return;
+      setHydrated((prev) => {
+        const next = new Map(prev);
+        for (const s of hydratedSamples) {
+          next.set(s.id, s.content);
+        }
+        return next;
+      });
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [samples, hydrated]);
 
   async function handleExtractProfile() {
-    if (!settings?.apiKey) {
+    if (!settings.apiKey) {
       setProfileStatus({
         state: "error",
         message: "Add your Gemini API key in Settings first.",
@@ -82,13 +97,14 @@ export default function SamplesPage() {
     }
     setProfileStatus({ state: "extracting" });
     try {
+      const full = await hydrateSamples(samples);
       const next = await extractVoiceProfile({
         apiKey: settings.apiKey,
         model: settings.model,
-        samples,
+        samples: full,
       });
-      saveProfile(next);
-      setProfile(next);
+      await saveProfile(next, profile?.userEdited ? true : false);
+      await refreshProfile();
       setProfileStatus({ state: "idle" });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -96,39 +112,75 @@ export default function SamplesPage() {
     }
   }
 
-  function handleClearProfile() {
+  async function handleClearProfile() {
     if (!confirm("Clear the voice profile? You can regenerate it later.")) return;
-    clearProfile();
-    setProfile(null);
+    await clearProfile();
+    await refreshProfile();
     setProfileStatus({ state: "idle" });
   }
 
-  function handleAdd() {
+  async function handleAdd() {
     if (!content.trim()) return;
-    addSample(name || "Untitled", content);
+    const text = content.trim();
+    const bytes = new TextEncoder().encode(text);
+    await addSample({
+      name: name || "Untitled",
+      kind: "own",
+      bytes,
+      mimeType: "text/markdown",
+    });
     setName("");
     setContent("");
-    refresh();
+    await refreshSamples();
   }
 
-  function handleDelete(id: string) {
+  async function handleDelete(id: string) {
     if (!confirm("Delete this sample?")) return;
-    deleteSample(id);
+    await deleteSample(id);
     if (editingId === id) setEditingId(null);
-    refresh();
+    setHydrated((prev) => {
+      const next = new Map(prev);
+      next.delete(id);
+      return next;
+    });
+    await refreshSamples();
   }
 
-  function startEdit(s: Sample) {
+  async function startEdit(s: Sample | { id: string; name: string; extractedPath: string | null }) {
     setEditingId(s.id);
     setEditName(s.name);
-    setEditContent(s.content);
+    if (s.extractedPath) {
+      setEditContent("");
+      setEditLoading(false);
+      return;
+    }
+    setEditLoading(true);
+    const cached = hydrated.get(s.id);
+    if (cached !== undefined) {
+      setEditContent(cached);
+      setEditLoading(false);
+      return;
+    }
+    const [full] = await hydrateSamples(samples.filter((x) => x.id === s.id));
+    setEditContent(full?.content ?? "");
+    setEditLoading(false);
   }
 
-  function saveEdit() {
+  async function saveEdit() {
     if (!editingId) return;
-    updateSample(editingId, { name: editName, content: editContent });
+    const sample = samples.find((s) => s.id === editingId);
+    const isPdf = !!sample?.extractedPath;
+    await updateSample(editingId, {
+      name: editName,
+      text: isPdf ? undefined : editContent,
+    });
     setEditingId(null);
-    refresh();
+    setHydrated((prev) => {
+      const next = new Map(prev);
+      if (!isPdf) next.set(editingId, editContent);
+      return next;
+    });
+    await refreshSamples();
   }
 
   async function processFiles(files: FileList | File[]) {
@@ -148,8 +200,12 @@ export default function SamplesPage() {
       const cleanName = file.name.replace(/\.(pdf|txt|md|markdown)$/i, "");
       try {
         let text: string;
+        let extracted: string | undefined;
+        const buffer = await file.arrayBuffer();
+        const bytes = new Uint8Array(buffer);
         if (isPdfFile(file)) {
           text = await extractPdfText(file);
+          extracted = text;
         } else {
           text = await file.text();
         }
@@ -157,7 +213,13 @@ export default function SamplesPage() {
           empty.push(file.name);
           continue;
         }
-        addSample(cleanName, text);
+        await addSample({
+          name: cleanName,
+          kind: "own",
+          bytes,
+          mimeType: file.type || (isPdfFile(file) ? "application/pdf" : "text/plain"),
+          extractedText: extracted,
+        });
         added += 1;
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
@@ -165,7 +227,7 @@ export default function SamplesPage() {
       }
     }
 
-    refresh();
+    await refreshSamples();
     if (fileInputRef.current) fileInputRef.current.value = "";
 
     if (errors.length > 0) {
@@ -218,9 +280,9 @@ export default function SamplesPage() {
     }
   }
 
-  const totalWords = samples.reduce(
-    (acc, s) => acc + s.content.split(/\s+/).filter(Boolean).length,
-    0,
+  const totalWords = useMemo(
+    () => samples.reduce((acc, s) => acc + s.wordCount, 0),
+    [samples],
   );
 
   const previewWordCount = content.trim()
@@ -229,7 +291,7 @@ export default function SamplesPage() {
 
   const profileStale =
     profile && samples.length > 0 && isProfileStale(profile, samples);
-  const hasKey = !!settings?.apiKey;
+  const hasKey = !!settings.apiKey;
 
   return (
     <div className="pt-14 pb-16 space-y-12">
@@ -288,6 +350,13 @@ export default function SamplesPage() {
                 <Banner tone="warn">
                   Your samples have changed since this profile was extracted. Regenerate
                   for a refreshed read on your voice.
+                </Banner>
+              )}
+              {profile.userEdited && (
+                <Banner tone="warn">
+                  This profile has been edited by hand in voice/profile.md. Regenerating
+                  will overwrite your edits (the previous version is backed up under
+                  voice/.history/).
                 </Banner>
               )}
               <p className="text-[14.5px] leading-relaxed whitespace-pre-wrap text-foreground/90">
@@ -446,8 +515,9 @@ export default function SamplesPage() {
         <ul className="space-y-3">
           {samples.map((s) => {
             const isEditing = editingId === s.id;
-            const preview = s.content.slice(0, 320);
-            const wordCount = s.content.split(/\s+/).filter(Boolean).length;
+            const fullText = hydrated.get(s.id) ?? "";
+            const preview = fullText.slice(0, PREVIEW_LEN);
+            const isPdf = !!s.extractedPath;
 
             if (isEditing) {
               return (
@@ -458,14 +528,25 @@ export default function SamplesPage() {
                     onChange={(e) => setEditName(e.target.value)}
                     className={inputClass}
                   />
-                  <textarea
-                    value={editContent}
-                    onChange={(e) => setEditContent(e.target.value)}
-                    rows={12}
-                    className={textareaClass}
-                  />
+                  {isPdf ? (
+                    <Hint>
+                      This sample was extracted from a PDF. You can rename it but the
+                      text is read-only here. Edit the source file directly if needed.
+                    </Hint>
+                  ) : editLoading ? (
+                    <Hint>Loading content…</Hint>
+                  ) : (
+                    <textarea
+                      value={editContent}
+                      onChange={(e) => setEditContent(e.target.value)}
+                      rows={12}
+                      className={textareaClass}
+                    />
+                  )}
                   <div className="flex items-center gap-2">
-                    <PrimaryButton onClick={saveEdit}>Save</PrimaryButton>
+                    <PrimaryButton onClick={saveEdit} disabled={editLoading}>
+                      Save
+                    </PrimaryButton>
                     <SecondaryButton onClick={() => setEditingId(null)}>
                       Cancel
                     </SecondaryButton>
@@ -477,14 +558,23 @@ export default function SamplesPage() {
             return (
               <Card as="li" key={s.id} className="space-y-3 transition-all hover:shadow-card-lift hover:border-hairline-strong">
                 <div className="flex items-baseline justify-between gap-4">
-                  <h3 className="text-[15px] font-medium tracking-tight2">{s.name}</h3>
+                  <h3 className="text-[15px] font-medium tracking-tight2">
+                    {s.name}
+                    {isPdf && (
+                      <span className="ml-2 inline-block font-mono text-[10px] text-muted uppercase tracking-wider">
+                        pdf
+                      </span>
+                    )}
+                  </h3>
                   <span className="font-mono text-[11px] text-muted shrink-0">
-                    {wordCount.toLocaleString()} words
+                    {s.wordCount.toLocaleString()} words
                   </span>
                 </div>
                 <p className="text-[13.5px] text-muted leading-relaxed whitespace-pre-wrap">
-                  {preview}
-                  {s.content.length > preview.length && (
+                  {preview || (
+                    <span className="text-foreground/30">Loading preview…</span>
+                  )}
+                  {fullText.length > preview.length && (
                     <span className="text-foreground/30">…</span>
                   )}
                 </p>

@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useState } from "react";
+
 import {
   Banner,
   Card,
@@ -14,32 +15,25 @@ import {
 import {
   consolidateDigest,
   formatRelativeTime,
-  removeCorrection,
 } from "../_lib/corrections";
 import {
   clearCorrections,
-  loadCorrections,
-  loadSettings,
-  saveCorrections,
+  deleteCorrection,
+  saveCorrectionsDigest,
 } from "../_lib/storage";
-import type { Correction, CorrectionsLog, Settings } from "../_lib/types";
+import { useData } from "../_lib/DataProvider";
+import type { Correction } from "../_lib/types";
 
 export default function CorrectionsPage() {
-  const [log, setLog] = useState<CorrectionsLog | null>(null);
-  const [settings, setSettings] = useState<Settings | null>(null);
+  const { corrections: log, settings, refreshCorrections } = useData();
   const [status, setStatus] = useState<{
     state: "idle" | "rebuilding" | "error";
     message?: string;
   }>({ state: "idle" });
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
-  useEffect(() => {
-    setLog(loadCorrections());
-    setSettings(loadSettings());
-  }, []);
-
   async function handleRebuildDigest() {
-    if (!log || !settings?.apiKey) {
+    if (!settings.apiKey) {
       setStatus({
         state: "error",
         message: "Add your Gemini API key in Settings first.",
@@ -60,13 +54,12 @@ export default function CorrectionsPage() {
         model: settings.model,
         corrections: log.corrections,
       });
-      const next: CorrectionsLog = {
-        ...log,
-        digest,
-        digestUpdatedAt: Date.now(),
-      };
-      saveCorrections(next);
-      setLog(next);
+      await saveCorrectionsDigest({
+        markdown: digest,
+        sourceCorrectionIds: log.corrections.map((c) => c.id),
+        force: log.digestUserEdited ?? false,
+      });
+      await refreshCorrections();
       setStatus({ state: "idle" });
     } catch (err) {
       setStatus({
@@ -76,27 +69,17 @@ export default function CorrectionsPage() {
     }
   }
 
-  function handleDelete(id: string) {
-    if (!log) return;
+  async function handleDelete(id: string) {
     if (!confirm("Delete this correction? Future generations will lose this lesson.")) return;
-    const next = removeCorrection(log, id);
-    saveCorrections(next);
-    setLog(next);
+    await deleteCorrection(id);
+    await refreshCorrections();
     if (expandedId === id) setExpandedId(null);
   }
 
-  function handleClearAll() {
+  async function handleClearAll() {
     if (!confirm("Clear ALL corrections? The digest will be wiped too. This cannot be undone.")) return;
-    clearCorrections();
-    setLog({ corrections: [], digest: "", digestUpdatedAt: 0 });
-  }
-
-  if (!log) {
-    return (
-      <div className="pt-14 pb-16">
-        <p className="text-[14px] text-muted">Loading…</p>
-      </div>
-    );
+    await clearCorrections();
+    await refreshCorrections();
   }
 
   const hasCorrections = log.corrections.length > 0;
@@ -127,6 +110,13 @@ export default function CorrectionsPage() {
           )}
         </div>
         <Card className="space-y-4">
+          {log.digestUserEdited && (
+            <Banner tone="warn">
+              You&apos;ve edited voice/corrections.md by hand. Rebuilding the digest
+              will overwrite your edits (the previous version is backed up under
+              voice/.history/).
+            </Banner>
+          )}
           {hasDigest ? (
             <p className="text-[14.5px] leading-relaxed whitespace-pre-wrap text-foreground/90">
               {log.digest}
