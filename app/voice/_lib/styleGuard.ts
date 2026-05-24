@@ -1,7 +1,54 @@
 import type { Violation } from "./types";
 
-export const MAX_SENTENCE_WORDS = 20;
+export const MAX_SENTENCE_WORDS = 40;
 export const MAX_CONSECUTIVE_PRONOUN_OPENERS = 2;
+export const LENGTH_TOLERANCE = 0.1;
+
+export type LengthTarget = { target: number; min: number; max: number };
+
+export function parseTargetWordCount(request: string): LengthTarget | null {
+  const normalized = request.replace(/(\d),(\d)/g, "$1$2");
+  const match = normalized.match(/\b(\d{2,5})\s*[- ]?word/i);
+  if (!match) return null;
+  const target = parseInt(match[1], 10);
+  if (target < 50 || target > 20000) return null;
+  return {
+    target,
+    min: Math.floor(target * (1 - LENGTH_TOLERANCE)),
+    max: Math.ceil(target * (1 + LENGTH_TOLERANCE)),
+  };
+}
+
+export function countWords(text: string): number {
+  return text.trim().split(/\s+/).filter(Boolean).length;
+}
+
+export type LengthFeedback = {
+  actual: number;
+  target: number;
+  min: number;
+  max: number;
+  status: "ok" | "short" | "long";
+  delta: number;
+};
+
+export function checkLength(text: string, target: LengthTarget): LengthFeedback {
+  const actual = countWords(text);
+  if (actual < target.min) {
+    return { actual, ...target, status: "short", delta: target.target - actual };
+  }
+  if (actual > target.max) {
+    return { actual, ...target, status: "long", delta: actual - target.target };
+  }
+  return { actual, ...target, status: "ok", delta: 0 };
+}
+
+export function scrubDashes(text: string): string {
+  return text
+    .replace(/\s*[—–]\s*/g, ", ")
+    .replace(/, ,/g, ",")
+    .replace(/(,\s*){2,}/g, ", ");
+}
 
 const PRONOUN_OPENER = /^(it'?s?|its|they|their|them|these|this|that|those|he|she|him|her|his|hers)\b/i;
 

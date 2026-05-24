@@ -1,5 +1,5 @@
 import type { Sample, Violation } from "./types";
-import { MAX_SENTENCE_WORDS } from "./styleGuard";
+import { MAX_SENTENCE_WORDS, type LengthFeedback } from "./styleGuard";
 
 const VOICE_INSTRUCTION = `You are writing as the author whose voice is described and shown below. Your primary objective is voice match. A careful reader of the samples should be able to attribute your output to the same author.
 
@@ -15,7 +15,7 @@ WORD CHOICE AND DESCRIPTION. Replace generic descriptors with concrete specifics
 
 SENTENCE OPENINGS. Do NOT stack consecutive sentences starting with pronouns. After a sentence opens with "Its," "They," "These," "This," "It," "Their," or "Them," the next sentence must open differently. Use dependent clauses, prepositional phrases, named subjects, transitional adverbs, or participial phrases. A pattern of "X did Y. They did Z. These results showed W. It marked a turning point." is the failure mode.
 
-RHYTHM. Vary aggressively. Mix short punchy sentences for emphasis with longer compound sentences for development. Use parentheticals. Use rhetorical questions when the writer's voice does. Do NOT default to a uniform middle length. Aim for an average sentence length around 16 words with frequent excursions to both ends of the range.
+RHYTHM. Vary aggressively. Mix short punchy sentences (5 to 12 words) for emphasis with longer compound sentences (25 to 40 words) for development. Long sentences are GOOD when they develop a clear thought, use commas and semicolons well, and read naturally. Commas are your friend. Parentheticals are your friend. Use rhetorical questions when the writer's voice does. The only bad long sentence is the AI run-on that loses the reader, jumps subjects mid-thought, or strings together too many ideas without structure. Do NOT default to a uniform middle length. Do NOT default to short choppy declaratives that sound like ESL prose.
 
 ANALYTICAL DEPTH. A good analyst names tensions, identifies causes, surfaces tradeoffs. Do not just summarize events. Tell the reader WHY a move happened, WHAT pressure forced it, WHO benefited and who lost ground. Steer toward the important details and skip the obvious ones.
 
@@ -25,7 +25,7 @@ const TASK_INSTRUCTION = `# Your task
 
 The user will tell you what to write. Pay attention to every part of their request.
 
-- LENGTH. If they ask for a specific length (300 words, 800 words, "long"), hit within 10 percent of that target. If they ask for 800, write 780 to 850. Count your words. Do not stop short.
+- LENGTH. If they ask for a specific length (300 words, 800 words, 1200 words, "long"), hit within 10 percent of that target. If they ask for 1200, write 1080 to 1320. Err on the LONG side, never short. The harness will catch and reject undershooting drafts so this rule matters. Do not summarize or wrap up early. If you find yourself wrapping up at 70 percent of target, add more depth, more examples, more analysis, more concrete specifics.
 - TOPICS. If they list multiple topics, cover ALL of them in roughly equal depth. Do not stop after the first one.
 - FORMAT. If they specify a format (essay, blog post, list), respect it.
 
@@ -39,11 +39,11 @@ Four constraints must hold. These apply WITHIN the voice you are imitating. The 
 
 2. NEVER use colons (:) in prose. Restructure to avoid them. Semicolons are fine when the writer's voice uses them.
 
-3. Keep every sentence to ${MAX_SENTENCE_WORDS} words or fewer. CRITICAL. ${MAX_SENTENCE_WORDS} is a cap, not a target. Average sentence length should be around 16 words. Many sentences should land in the 16 to 20 word band. Use the full range. Do NOT default to 8 to 12 word declaratives.
+3. Vary sentence length aggressively. Use long sentences (25 to 40 words) for development. Use short sentences (5 to 12 words) for emphasis. Long sentences are GOOD when they have clear structure, use commas and semicolons well, and read naturally. The hard cap is ${MAX_SENTENCE_WORDS} words on any single sentence, but the cap is for safety, not a target. The only sentence pattern to avoid is the AI run-on (40 plus words, weak structure, lost subject, hard to read). Do NOT default to short choppy 8 to 12 word declaratives. Do NOT write everything at the same length.
 
 4. NEVER use "It's not X, it's Y" or "Not just X, but Y" or any close variant. This includes "It isn't X. It's Y", "Not only X but also Y", "This isn't X, it's Y", "Rather than X, it's Y", and standalone phrases like "X, not just Y." Contrast ideas through plain phrasing instead.
 
-If you find yourself stacking short identical-rhythm sentences or pronoun-led openings, stop and rewrite. Vary structure. Use compound sentences with commas. Use parentheticals. Use rhetorical questions if the writer does. Match the writer's pace and complexity within the ${MAX_SENTENCE_WORDS}-word cap.`;
+If you find yourself stacking short identical-rhythm sentences or pronoun-led openings, stop and rewrite. Vary structure. Use compound sentences with commas. Use semicolons when they fit the writer's voice. Use parentheticals. Use rhetorical questions if the writer does. Match the writer's pace and complexity. Default to thoughtful, varied prose with long sentences mixed in.`;
 
 const NO_SAMPLES_FALLBACK = `(No voice samples were provided. Write thoughtfully and with personality. Avoid sounding like a typical AI assistant.)`;
 
@@ -113,6 +113,7 @@ export function buildRetryPrompt(
   sourceMaterial: string,
   previousAttempt: string,
   violations: Violation[],
+  lengthFeedback?: LengthFeedback | null,
 ): string {
   const flagged = violations
     .slice(0, 12)
@@ -122,17 +123,37 @@ export function buildRetryPrompt(
     })
     .join("\n");
 
+  const lengthBlock =
+    lengthFeedback && lengthFeedback.status !== "ok"
+      ? `# Length feedback
+
+Your draft was ${lengthFeedback.actual} words. The target is ${lengthFeedback.target} words (acceptable range ${lengthFeedback.min} to ${lengthFeedback.max}). ${
+          lengthFeedback.status === "short"
+            ? `You are SHORT by about ${lengthFeedback.delta} words. Add real depth. More examples, more analysis, more named specifics, more nuance. Do NOT pad with filler. Do NOT just restate things. Add new substance.`
+            : `You went LONG by about ${lengthFeedback.delta} words. Trim filler and tighten phrasing while preserving every point.`
+        }
+
+`
+      : "";
+
+  const styleBlock =
+    violations.length > 0
+      ? `# Style issues to fix
+
+${flagged}
+
+`
+      : "";
+
   return `${buildUserPrompt(request, sourceMaterial)}
 
-# Your previous attempt violated the style rules
+# Your previous attempt needs revision
 
 You wrote:
 
 ${previousAttempt}
 
-These specific things broke the rules:
-
-${flagged}
-
-Rewrite the response from scratch. Keep the same length, the same topic coverage, and the same voice. Just fix the violations. Do not shorten the essay or strip content to avoid the rules. No em dashes, no colons, no sentences over ${MAX_SENTENCE_WORDS} words, no "not X, it's Y" patterns.`;
+${lengthBlock}${styleBlock}Rewrite the response from scratch. Keep the topic coverage and voice. Address the feedback above. ${
+    lengthFeedback?.status === "short" ? "Hit the target length with real substance, not padding. " : ""
+  }No em dashes. No colons. No sentences over ${MAX_SENTENCE_WORDS} words. No "not X, it's Y" patterns. Use long varied sentences with commas when appropriate. Do NOT write in choppy short declaratives.`;
 }

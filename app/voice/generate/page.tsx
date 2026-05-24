@@ -3,7 +3,6 @@
 import Link from "next/link";
 import { useMemo, useState } from "react";
 
-import { HighlightedOutput } from "../_components/HighlightedOutput";
 import {
   AccentButton,
   Banner,
@@ -20,19 +19,38 @@ import { DEFAULT_MODEL, generateText } from "../_lib/gemini";
 import { buildRetryPrompt, buildSystemPrompt, buildUserPrompt } from "../_lib/prompt";
 import { archiveGeneration, hydrateSamples } from "../_lib/storage";
 import { recordCorrection } from "../_lib/corrections";
-import { findViolations, summarizeViolations } from "../_lib/styleGuard";
+import {
+  checkLength,
+  findViolations,
+  parseTargetWordCount,
+  scrubDashes,
+  type LengthFeedback,
+} from "../_lib/styleGuard";
 import { useData } from "../_lib/DataProvider";
 import type { Sample, Violation } from "../_lib/types";
 
 type Status =
   | { state: "idle" }
-  | { state: "generating" }
-  | { state: "retrying" }
+  | { state: "generating"; attempt: number }
   | { state: "done" }
   | { state: "error"; message: string };
 
 const LOW_SAMPLE_WORDS = 300;
 const TRUNCATION_REASONS = new Set(["MAX_TOKENS", "LENGTH"]);
+const MAX_ATTEMPTS = 5;
+
+type Attempt = {
+  text: string;
+  scrubbed: string;
+  violations: Violation[];
+  length: LengthFeedback | null;
+  finishReason: string;
+};
+
+function attemptScore(a: Attempt): number {
+  const lengthPenalty = a.length && a.length.status !== "ok" ? Math.min(a.length.delta, 500) : 0;
+  return a.violations.length * 100 + lengthPenalty;
+}
 
 export default function GeneratePage() {
   const {
@@ -50,8 +68,7 @@ export default function GeneratePage() {
   const [output, setOutput] = useState("");
   const [lastRequest, setLastRequest] = useState("");
   const [lastSource, setLastSource] = useState("");
-  const [violations, setViolations] = useState<Violation[]>([]);
-  const [retried, setRetried] = useState(false);
+  const [attemptsUsed, setAttemptsUsed] = useState(0);
   const [truncated, setTruncated] = useState(false);
   const [copied, setCopied] = useState(false);
   const [rewriteOpen, setRewriteOpen] = useState(false);
@@ -99,16 +116,16 @@ export default function GeneratePage() {
     }
 
     setOutput("");
-    setViolations([]);
-    setRetried(false);
+    setAttemptsUsed(0);
     setTruncated(false);
     setRewriteOpen(false);
     setRewriteText("");
     setRewriteNote("");
     setRewriteStatus({ state: "idle" });
-    setStatus({ state: "generating" });
+    setStatus({ state: "generating", attempt: 1 });
 
     const startedAt = performance.now();
+    const target = parseTargetWordCount(request);
 
     try {
       const fullSamples: Sample[] = await hydrateSamples(selectedMetas);
@@ -122,81 +139,79 @@ export default function GeneratePage() {
       setLastRequest(request);
       setLastSource(source);
 
-      const first = await generateText({
-        apiKey: settings.apiKey,
-        systemPrompt,
-        userPrompt,
-        temperature: settings.temperature,
-      });
+      const allAttempts: Attempt[] = [];
+      let best: Attempt | null = null;
 
-      const firstViolations = findViolations(first.text);
-
-      if (firstViolations.length === 0) {
-        const elapsed = Math.round(performance.now() - startedAt);
-        setOutput(first.text);
-        setViolations([]);
-        setTruncated(TRUNCATION_REASONS.has(first.finishReason));
-        setStatus({ state: "done" });
-        archiveGeneration({
-          request,
-          source,
+      async function runOnce(promptText: string, attempt: number): Promise<Attempt> {
+        setStatus({ state: "generating", attempt });
+        const result = await generateText({
+          apiKey: settings.apiKey,
           systemPrompt,
-          draftV1: first.text,
-          violationsV1: [],
-          finalText: first.text,
-          meta: {
-            model: DEFAULT_MODEL,
-            temperature: settings.temperature,
-            finishReason: first.finishReason,
-            ms: elapsed,
-            accepted: false,
-            retried: false,
-          },
-        }).catch((err) => console.error("archive failed", err));
-        return;
+          userPrompt: promptText,
+          temperature: settings.temperature,
+        });
+        const scrubbed = scrubDashes(result.text);
+        const violations = findViolations(scrubbed);
+        const length = target ? checkLength(scrubbed, target) : null;
+        return {
+          text: result.text,
+          scrubbed,
+          violations,
+          length,
+          finishReason: result.finishReason,
+        };
       }
 
-      setStatus({ state: "retrying" });
-      const retryPrompt = buildRetryPrompt(request, source, first.text, firstViolations);
-      const second = await generateText({
-        apiKey: settings.apiKey,
-        systemPrompt,
-        userPrompt: retryPrompt,
-        temperature: settings.temperature,
-      });
+      const first = await runOnce(userPrompt, 1);
+      allAttempts.push(first);
+      best = first;
 
-      const secondViolations = findViolations(second.text);
+      let attemptNum = 1;
+      while (
+        attemptNum < MAX_ATTEMPTS &&
+        (best.violations.length > 0 || (best.length && best.length.status !== "ok"))
+      ) {
+        attemptNum += 1;
+        const retryPrompt = buildRetryPrompt(
+          request,
+          source,
+          best.text,
+          best.violations,
+          best.length,
+        );
+        const next = await runOnce(retryPrompt, attemptNum);
+        allAttempts.push(next);
+        if (attemptScore(next) < attemptScore(best)) {
+          best = next;
+        }
+      }
 
-      const useSecond =
-        secondViolations.length < firstViolations.length &&
-        second.text.length >= first.text.length * 0.7;
-
-      const winner = useSecond ? second : first;
-      const winnerViolations = useSecond ? secondViolations : firstViolations;
       const elapsed = Math.round(performance.now() - startedAt);
 
-      setOutput(winner.text);
-      setViolations(winnerViolations);
-      setRetried(true);
-      setTruncated(TRUNCATION_REASONS.has(winner.finishReason));
+      setOutput(best.scrubbed);
+      setAttemptsUsed(allAttempts.length);
+      setTruncated(TRUNCATION_REASONS.has(best.finishReason));
       setStatus({ state: "done" });
 
       archiveGeneration({
         request,
         source,
         systemPrompt,
-        draftV1: first.text,
-        violationsV1: firstViolations,
-        draftV2: second.text,
-        violationsV2: secondViolations,
-        finalText: winner.text,
+        draftV1: allAttempts[0].text,
+        violationsV1: allAttempts[0].violations,
+        draftV2: allAttempts.length > 1 ? allAttempts[allAttempts.length - 1].text : undefined,
+        violationsV2:
+          allAttempts.length > 1
+            ? allAttempts[allAttempts.length - 1].violations
+            : undefined,
+        finalText: best.scrubbed,
         meta: {
           model: DEFAULT_MODEL,
           temperature: settings.temperature,
-          finishReason: winner.finishReason,
+          finishReason: best.finishReason,
           ms: elapsed,
           accepted: false,
-          retried: true,
+          retried: allAttempts.length > 1,
         },
       }).catch((err) => console.error("archive failed", err));
     } catch (err) {
@@ -271,7 +286,7 @@ export default function GeneratePage() {
         source: lastSource,
         systemPrompt: "(see paired draft folder)",
         draftV1: output,
-        violationsV1: violations,
+        violationsV1: [],
         finalText: output,
         meta: {
           model: DEFAULT_MODEL,
@@ -279,7 +294,7 @@ export default function GeneratePage() {
           finishReason: "COPIED",
           ms: 0,
           accepted: true,
-          retried,
+          retried: attemptsUsed > 1,
         },
       }).catch((err) => console.error("archive accept failed", err));
     }
@@ -289,7 +304,7 @@ export default function GeneratePage() {
   const hasSamples = samples.length > 0;
   const selectedWordCount = selectedMetas.reduce((acc, s) => acc + s.wordCount, 0);
   const lowSampleVolume = hasSamples && selectedWordCount < LOW_SAMPLE_WORDS;
-  const isWorking = status.state === "generating" || status.state === "retrying";
+  const isWorking = status.state === "generating";
   const outputWordCount = output ? output.split(/\s+/).filter(Boolean).length : 0;
 
   return (
@@ -297,7 +312,7 @@ export default function GeneratePage() {
       <PageHeader
         eyebrow="Generate"
         title="Draft something in your voice"
-        description="Tell the model what to write. It drafts in your voice, flags style violations, and retries once if needed."
+        description="Tell the model what to write. It drafts in your voice and self-revises until the output passes the style guard and hits the requested length."
       />
 
       {hasKey && hasSamples && (
@@ -321,7 +336,7 @@ export default function GeneratePage() {
                   <span className="inline-flex items-center gap-1.5 text-accent">
                     <span className="inline-block h-1.5 w-1.5 rounded-full bg-accent" />
                     {corrections.corrections.length}{" "}
-                    {corrections.corrections.length === 1 ? "correction" : "corrections"}{" "}
+                    {corrections.corrections.length === 1 ? "revision" : "revisions"}{" "}
                     learned
                   </span>
                 </>
@@ -449,13 +464,9 @@ export default function GeneratePage() {
             {status.state === "generating" && (
               <>
                 <Spinner />
-                Drafting…
-              </>
-            )}
-            {status.state === "retrying" && (
-              <>
-                <Spinner />
-                Fixing style…
+                {status.attempt === 1
+                  ? "Drafting…"
+                  : `Revising (attempt ${status.attempt} of ${MAX_ATTEMPTS})…`}
               </>
             )}
             {!isWorking && (
@@ -481,21 +492,13 @@ export default function GeneratePage() {
               <span className="font-mono text-[11px] text-muted">
                 {outputWordCount.toLocaleString()} words
               </span>
-              {retried && (
-                <span className="text-[11.5px] text-muted">auto-retried once</span>
+              {attemptsUsed > 1 && (
+                <span className="text-[11.5px] text-muted">
+                  self-revised {attemptsUsed - 1} time{attemptsUsed - 1 === 1 ? "" : "s"}
+                </span>
               )}
             </div>
             <div className="flex items-center gap-3">
-              {violations.length > 0 ? (
-                <span className="text-[12px] text-amber-700 dark:text-amber-300">
-                  {summarizeViolations(violations)}
-                </span>
-              ) : (
-                <span className="inline-flex items-center gap-1.5 text-[12px] text-accent">
-                  <span className="inline-block h-1.5 w-1.5 rounded-full bg-accent" />
-                  Clean
-                </span>
-              )}
               <SecondaryButton onClick={handleCopy}>
                 {copied ? "Copied" : "Copy"}
               </SecondaryButton>
@@ -503,8 +506,8 @@ export default function GeneratePage() {
           </div>
 
           <Card className="bg-background">
-            <div className="text-[15px] leading-[1.65]">
-              <HighlightedOutput text={output} violations={violations} />
+            <div className="text-[15px] leading-[1.65] whitespace-pre-wrap">
+              {output}
             </div>
           </Card>
 
@@ -514,15 +517,6 @@ export default function GeneratePage() {
               again, or ask for a shorter piece. If your samples are very long, deselecting
               some can free up room for output.
             </Banner>
-          )}
-
-          {violations.length > 0 && (
-            <div className="flex items-center gap-5 text-[11.5px] text-muted pt-1 flex-wrap">
-              <LegendDot color="bg-red-500" label="Em dash · colon" />
-              <LegendDot color="bg-yellow-500" label="Long sentence" />
-              <LegendDot color="bg-orange-500" label="Contrastive pattern" />
-              <LegendDot color="bg-purple-500" label="Pronoun stack" />
-            </div>
           )}
 
           <div className="pt-4 border-t border-hairline">
@@ -626,7 +620,7 @@ export default function GeneratePage() {
                         href="/voice/corrections"
                         className="text-[12.5px] text-muted hover:text-foreground underline underline-offset-4"
                       >
-                        View all corrections →
+                        View all revisions →
                       </Link>
                     </div>
                   </Card>
@@ -665,11 +659,3 @@ function Spinner() {
   );
 }
 
-function LegendDot({ color, label }: { color: string; label: string }) {
-  return (
-    <span className="inline-flex items-center gap-1.5">
-      <span className={`inline-block h-1.5 w-1.5 rounded-full ${color}`} />
-      {label}
-    </span>
-  );
-}
