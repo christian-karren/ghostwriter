@@ -11,7 +11,6 @@ export const metadata: Metadata = {
 export default function VoiceLayout({ children }: { children: React.ReactNode }) {
   return (
     <div className="voice-root min-h-screen relative isolate">
-      <div className="voice-hero-bg pointer-events-none absolute inset-x-0 top-0 h-[420px] -z-10" />
       <VoiceShell>{children}</VoiceShell>
     </div>
   );

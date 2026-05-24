@@ -1,14 +1,23 @@
 import type { Metadata } from "next";
-import { Anton, Geist, Geist_Mono } from "next/font/google";
+import { Anton, Geist_Mono, Hanken_Grotesk, Newsreader } from "next/font/google";
 import "./globals.css";
+import { AuroraBackground } from "./_components/AuroraBackground";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
+const hanken = Hanken_Grotesk({
+  variable: "--font-sans",
   subsets: ["latin"],
+  weight: ["300", "400", "500", "600", "700"],
+});
+
+const newsreader = Newsreader({
+  variable: "--font-serif",
+  subsets: ["latin"],
+  weight: ["300", "400", "500", "600"],
+  style: ["normal", "italic"],
 });
 
 const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
+  variable: "--font-mono",
   subsets: ["latin"],
 });
 
@@ -31,9 +40,12 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body
-        className={`${geistSans.variable} ${geistMono.variable} ${anton.variable} antialiased`}
+        className={`${hanken.variable} ${newsreader.variable} ${geistMono.variable} ${anton.variable} antialiased`}
       >
-        {children}
+        <AuroraBackground />
+        <div className="relative" style={{ zIndex: 2 }}>
+          {children}
+        </div>
       </body>
     </html>
   );

@@ -4,6 +4,7 @@ import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
 
 import { DataProvider } from "../_lib/DataProvider";
+import { Atmosphere } from "./Atmosphere";
 import { Nav } from "./Nav";
 
 export function VoiceShell({ children }: { children: ReactNode }) {
@@ -12,12 +13,13 @@ export function VoiceShell({ children }: { children: ReactNode }) {
 
   return (
     <DataProvider>
+      <Atmosphere />
       {isOnboarding ? (
         children
       ) : (
         <>
           <Nav />
-          <main className="max-w-5xl mx-auto px-6 pb-16">{children}</main>
+          <main className="max-w-5xl mx-auto px-6 pb-16 relative">{children}</main>
         </>
       )}
     </DataProvider>
