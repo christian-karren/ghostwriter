@@ -9,6 +9,7 @@ import { addSample, saveSettings } from "../_lib/storage";
 import { useData } from "../_lib/DataProvider";
 
 const WELCOME_AUTO_ADVANCE_MS = 3000;
+const LOGO_SRC = `${process.env.NEXT_PUBLIC_BASE_PATH || ""}/ghostwriter.png`;
 const FADE_MS = 160;
 
 type Step = "welcome" | "samples" | "apiKey";
@@ -117,7 +118,7 @@ function WelcomeStep({ onAdvance }: { onAdvance: () => void }) {
         Teach AI to write in your voice
       </p>
       <Image
-        src="/ghostwriter.png"
+        src={LOGO_SRC}
         alt="Ghostwriter"
         width={260}
         height={260}

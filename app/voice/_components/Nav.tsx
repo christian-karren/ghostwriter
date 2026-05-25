@@ -4,6 +4,9 @@ import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
+const BASE = process.env.NEXT_PUBLIC_BASE_PATH || "";
+const LOGO_SRC = `${BASE}/ghostwriter.png`;
+
 const TABS = [
   { href: "/voice/generate", label: "Generate" },
   { href: "/voice/samples", label: "Samples" },
@@ -22,7 +25,7 @@ export function Nav() {
           className="w-[240px] shrink-0 flex items-center justify-center gap-2.5"
         >
           <Image
-            src="/ghostwriter.png"
+            src={LOGO_SRC}
             alt="Ghostwriter"
             width={40}
             height={40}
