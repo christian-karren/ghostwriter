@@ -298,14 +298,20 @@ body {
   color: var(--text-low);
   font-size: 14px;
   line-height: 1.625;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
   opacity: 1;
   transform: translateY(0);
   transition:
     opacity 260ms var(--ease),
     transform 260ms var(--ease);
+}
+/* On wide viewports, clamp to one line so longer prompts don't push the
+   textarea down. On mobile, allow wrapping so the full prompt is readable. */
+@media (min-width: 768px) {
+  .prompt-overlay {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
 }
 .prompt-overlay-exit {
   opacity: 0;
