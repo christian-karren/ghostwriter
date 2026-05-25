@@ -558,7 +558,7 @@ export default function GeneratePage() {
                 onFocus={() => setRequestFocused(true)}
                 onBlur={() => setRequestFocused(false)}
                 rows={14}
-                className={`${textareaClass} text-[16px]`}
+                className={`${textareaClass} text-[16px] h-[170px] md:h-auto`}
               />
               {request.length === 0 && (
                 <span
