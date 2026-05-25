@@ -499,7 +499,12 @@ export default function GeneratePage() {
         onDelete={handleDeleteHistory}
       />
 
-      <div className="pt-12 pb-16 space-y-8">
+      <div
+        className="pt-12 pb-16 space-y-8"
+        style={{
+          paddingLeft: "max(0px, calc((1456px - 100vw) / 2))",
+        }}
+      >
         <div className="max-w-4xl mx-auto px-6 space-y-8">
           <PageHeader align="center" title="Draft something in your voice" />
 
