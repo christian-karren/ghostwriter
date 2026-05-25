@@ -50,6 +50,24 @@ export function scrubDashes(text: string): string {
     .replace(/(,\s*){2,}/g, ", ");
 }
 
+export function scrubMarkdown(text: string): string {
+  return (
+    text
+      // bold: **text** or __text__
+      .replace(/\*\*(.+?)\*\*/g, "$1")
+      .replace(/__(.+?)__/g, "$1")
+      // italic: *text* (but not part of bold) and _text_
+      .replace(/(^|[^*\w])\*(?!\s)([^*\n]+?)(?<!\s)\*(?!\w)/g, "$1$2")
+      .replace(/(^|[^_\w])_(?!\s)([^_\n]+?)(?<!\s)_(?!\w)/g, "$1$2")
+      // headings: leading "#" on a line
+      .replace(/^\s*#{1,6}\s+/gm, "")
+      // blockquote markers: leading ">"
+      .replace(/^\s*>\s?/gm, "")
+      // inline links: [text](url) -> text
+      .replace(/\[([^\]]+)\]\(([^)]+)\)/g, "$1")
+  );
+}
+
 const PRONOUN_OPENER = /^(it'?s?|its|they|their|them|these|this|that|those|he|she|him|her|his|hers)\b/i;
 
 export function findViolations(text: string): Violation[] {

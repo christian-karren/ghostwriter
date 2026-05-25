@@ -31,6 +31,7 @@ import {
   findViolations,
   parseTargetWordCount,
   scrubDashes,
+  scrubMarkdown,
   type LengthFeedback,
 } from "../_lib/styleGuard";
 import { useData } from "../_lib/DataProvider";
@@ -305,7 +306,7 @@ export default function GeneratePage() {
           userPrompt: promptText,
           temperature: settings.temperature,
         });
-        const scrubbed = scrubDashes(result.text);
+        const scrubbed = scrubMarkdown(scrubDashes(result.text));
         const violations = findViolations(scrubbed);
         const length = target ? checkLength(scrubbed, target) : null;
         return {

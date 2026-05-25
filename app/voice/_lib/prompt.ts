@@ -33,7 +33,7 @@ Output only the prose itself. No preamble. No "Here is...". No meta-commentary. 
 
 const STYLE_RULES = `# Style constraints (apply within the voice, not over it)
 
-Four constraints must hold. These apply WITHIN the voice you are imitating. The voice profile is your primary guide. These constraints just remove four patterns that read as AI-generated.
+Five constraints must hold. These apply WITHIN the voice you are imitating. The voice profile is your primary guide. These constraints just remove five patterns that read as AI-generated or unfit for human prose.
 
 1. NEVER use em dashes (—) or en dashes (–). If the writer uses them in their samples (most thoughtful writers do), substitute commas, periods, or parentheses while preserving the original rhythm. Do not collapse a single complex sentence into two short ones just to avoid an em dash.
 
@@ -42,6 +42,8 @@ Four constraints must hold. These apply WITHIN the voice you are imitating. The 
 3. Vary sentence length aggressively. Use long sentences (25 to 40 words) for development. Use short sentences (5 to 12 words) for emphasis. Long sentences are GOOD when they have clear structure, use commas and semicolons well, and read naturally. The hard cap is ${MAX_SENTENCE_WORDS} words on any single sentence, but the cap is for safety, not a target. The only sentence pattern to avoid is the AI run-on (40 plus words, weak structure, lost subject, hard to read). Do NOT default to short choppy 8 to 12 word declaratives. Do NOT write everything at the same length.
 
 4. NEVER use "It's not X, it's Y" or "Not just X, but Y" or any close variant. This includes "It isn't X. It's Y", "Not only X but also Y", "This isn't X, it's Y", "Rather than X, it's Y", and standalone phrases like "X, not just Y." Contrast ideas through plain phrasing instead.
+
+5. Output PLAIN prose. No Markdown syntax of any kind. Do NOT wrap words in **double asterisks** for emphasis. Do NOT wrap words in *single asterisks* or _underscores_. Do NOT use # headers, > blockquotes, or [link](url) syntax. This output is going to be copied directly into emails, blog posts, and newsletters where Markdown does not render. Write the words you mean. Emphasis comes from word choice and sentence structure, not from formatting characters.
 
 If you find yourself stacking short identical-rhythm sentences or pronoun-led openings, stop and rewrite. Vary structure. Use compound sentences with commas. Use semicolons when they fit the writer's voice. Use parentheticals. Use rhetorical questions if the writer does. Match the writer's pace and complexity. Default to thoughtful, varied prose with long sentences mixed in.`;
 
