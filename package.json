@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "next dev --turbopack",
     "build": "next build",
+    "build:web": "NEXT_PUBLIC_BASE_PATH=/ghostwriter next build && node scripts/sync-web-export.mjs",
     "start": "next start",
     "lint": "next lint",
     "tauri": "tauri",

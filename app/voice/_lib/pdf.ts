@@ -2,9 +2,11 @@
 
 type PdfTextItem = { str?: string; hasEOL?: boolean };
 
+const BASE = process.env.NEXT_PUBLIC_BASE_PATH || "";
+
 export async function extractPdfText(file: File): Promise<string> {
   const pdfjsLib = await import("pdfjs-dist");
-  pdfjsLib.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
+  pdfjsLib.GlobalWorkerOptions.workerSrc = `${BASE}/pdf.worker.min.mjs`;
 
   const buffer = await file.arrayBuffer();
   const doc = await pdfjsLib.getDocument({ data: buffer }).promise;

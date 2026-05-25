@@ -55,10 +55,6 @@ type Phase =
   | { state: "ready"; value: DataContextValue }
   | { state: "error"; message: string };
 
-function isTauri(): boolean {
-  return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
-}
-
 const AUTO_EXTRACT_DEBOUNCE_MS = 1500;
 
 export function DataProvider({ children }: { children: ReactNode }) {
@@ -105,14 +101,6 @@ export function DataProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
-    if (!isTauri()) {
-      setPhase({
-        state: "error",
-        message:
-          "Ghostwriter must be run as a desktop app. Use `npm run tauri:dev` for development or open the built `.app` bundle.",
-      });
-      return;
-    }
     let cancelled = false;
     refreshAll()
       .then(() => {

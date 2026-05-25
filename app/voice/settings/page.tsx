@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 
-import { openDataDir, saveSettings } from "../_lib/storage";
+import { isTauriEnv, openDataDir, saveSettings } from "../_lib/storage";
 import { useData } from "../_lib/DataProvider";
 import type { Settings } from "../_lib/types";
 import {
@@ -19,6 +19,7 @@ export default function SettingsPage() {
   const [draft, setDraft] = useState<Settings>(settings);
   const [revealKey, setRevealKey] = useState(false);
   const [saved, setSaved] = useState(false);
+  const isDesktop = isTauriEnv();
 
   async function update(patch: Partial<Settings>) {
     const next = { ...draft, ...patch };
@@ -35,10 +36,17 @@ export default function SettingsPage() {
         eyebrow="Settings"
         title="Your configuration"
         description={
-          <>
-            The Gemini API key is stored in your macOS Keychain. Everything else lives
-            on disk in your app data folder.
-          </>
+          isDesktop ? (
+            <>
+              The Gemini API key is stored in your macOS Keychain. Everything else lives
+              on disk in your app data folder.
+            </>
+          ) : (
+            <>
+              Your samples, profile, and revisions live in this browser&apos;s storage.
+              Use the desktop app for filesystem access and Keychain-backed secrets.
+            </>
+          )
         }
       />
 
@@ -47,7 +55,9 @@ export default function SettingsPage() {
           <div className="space-y-0.5">
             <h2 className="text-[14px] font-medium tracking-tight2">Gemini API key</h2>
             <p className="text-[12px] text-muted">
-              Required. Stored in macOS Keychain, never on disk.
+              {isDesktop
+                ? "Required. Stored in macOS Keychain, never on disk."
+                : "Required. Stored in this browser. Use a key scoped just to Ghostwriter."}
             </p>
           </div>
           {saved && (
@@ -120,19 +130,46 @@ export default function SettingsPage() {
         </div>
       </Card>
 
-      <Card className="space-y-4">
-        <div className="space-y-0.5">
-          <h2 className="text-[14px] font-medium tracking-tight2">Your data folder</h2>
-          <p className="text-[12px] text-muted">
-            Samples, voice profile, revisions, and generation history all live on disk
-            as plain files. Edit them in your favorite editor, run git on the folder,
-            back them up however you want.
-          </p>
-        </div>
-        <div>
-          <SecondaryButton onClick={openDataDir}>Open data folder</SecondaryButton>
-        </div>
-      </Card>
+      {isDesktop && (
+        <Card className="space-y-4">
+          <div className="space-y-0.5">
+            <h2 className="text-[14px] font-medium tracking-tight2">Your data folder</h2>
+            <p className="text-[12px] text-muted">
+              Samples, voice profile, revisions, and generation history all live on disk
+              as plain files. Edit them in your favorite editor, run git on the folder,
+              back them up however you want.
+            </p>
+          </div>
+          <div>
+            <SecondaryButton onClick={openDataDir}>Open data folder</SecondaryButton>
+          </div>
+        </Card>
+      )}
+
+      {!isDesktop && (
+        <Card className="space-y-4">
+          <div className="space-y-0.5">
+            <h2 className="text-[14px] font-medium tracking-tight2">Want filesystem access?</h2>
+            <p className="text-[12px] text-muted">
+              The desktop app keeps your samples, voice profile, revisions, and full
+              draft history as plain files you can edit by hand, run git on, and back
+              up. The web version stores everything in this browser&apos;s storage.
+            </p>
+          </div>
+          <div>
+            <SecondaryButton
+              onClick={() => {
+                window.open(
+                  "https://github.com/christian-karren/ghostwriter/releases/latest",
+                  "_blank",
+                );
+              }}
+            >
+              Download desktop app
+            </SecondaryButton>
+          </div>
+        </Card>
+      )}
     </div>
   );
 }

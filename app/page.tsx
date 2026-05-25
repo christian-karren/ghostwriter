@@ -2,17 +2,20 @@
 
 import { useEffect } from "react";
 
+const BASE = process.env.NEXT_PUBLIC_BASE_PATH || "";
+const TARGET = `${BASE}/voice/`;
+
 export default function Home() {
   useEffect(() => {
-    window.location.replace("/voice/");
+    window.location.replace(TARGET);
   }, []);
 
   return (
     <>
       <noscript>
-        <meta httpEquiv="refresh" content="0; url=/voice/" />
+        <meta httpEquiv="refresh" content={`0; url=${TARGET}`} />
         <p>
-          <a href="/voice/">Continue to Ghostwriter</a>
+          <a href={TARGET}>Continue to Ghostwriter</a>
         </p>
       </noscript>
       <div className="min-h-screen flex items-center justify-center">
