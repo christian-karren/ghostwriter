@@ -608,25 +608,26 @@ export default function GeneratePage() {
               className="sr-only"
             />
 
-            <div className="flex items-center justify-between gap-3 pt-1 flex-wrap">
-              <div className="flex items-center gap-3 flex-wrap">
-                <SecondaryButton
-                  onClick={() => fileInputRef.current?.click()}
-                  disabled={isUploading}
-                >
-                  <PaperclipIcon />
-                  {isUploading ? uploadStatus.message : "Upload files"}
-                </SecondaryButton>
-                {uploadStatus.state === "error" && (
-                  <span className="text-[12px] text-rose-600 dark:text-rose-400">
-                    {uploadStatus.message}
+            <div className="flex items-center justify-between gap-2 sm:gap-3 pt-1 md:flex-wrap">
+              <SecondaryButton
+                onClick={() => fileInputRef.current?.click()}
+                disabled={isUploading}
+                className="flex-1 md:flex-initial whitespace-nowrap !px-3 md:!px-4"
+              >
+                <PaperclipIcon />
+                {isUploading ? (
+                  uploadStatus.message
+                ) : (
+                  <span>
+                    Upload<span className="hidden md:inline"> files</span>
                   </span>
                 )}
-              </div>
+              </SecondaryButton>
 
               <AccentButton
                 onClick={handleGenerate}
                 disabled={isWorking || !hasKey || !request.trim()}
+                className="flex-1 md:flex-initial whitespace-nowrap !px-3 md:!px-5"
               >
                 {status.state === "generating" && (
                   <>
@@ -646,6 +647,11 @@ export default function GeneratePage() {
                 )}
               </AccentButton>
             </div>
+            {uploadStatus.state === "error" && (
+              <span className="text-[12px] text-rose-600 dark:text-rose-400">
+                {uploadStatus.message}
+              </span>
+            )}
             {status.state === "error" && (
               <span className="text-[12.5px] text-red-600 dark:text-red-400">
                 {status.message}
