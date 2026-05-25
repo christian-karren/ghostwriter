@@ -8,7 +8,6 @@ import {
   Banner,
   Card,
   Eyebrow,
-  PageHeader,
   SecondaryButton,
   textareaClass,
 } from "../_components/ui";
@@ -506,9 +505,11 @@ export default function GeneratePage() {
         }}
       >
         <div className="max-w-4xl mx-auto px-6 space-y-8">
-          <div className="pl-9 sm:pl-7">
-            <PageHeader title="Draft something in your voice" />
-          </div>
+          <header className="reveal pl-9 sm:pl-7">
+            <h1 className="font-serif text-[36px] sm:text-[44px] md:text-[52px] lg:text-[60px] xl:text-[64px] font-[400] tracking-[-0.015em] leading-[1.04] text-ink whitespace-nowrap">
+              Draft something in your voice
+            </h1>
+          </header>
 
           <div className="space-y-3">
             {!hasKey && (
