@@ -498,7 +498,7 @@ export default function GeneratePage() {
         onDelete={handleDeleteHistory}
       />
 
-      <div className="pt-12 pb-16 space-y-8 pl-[260px]">
+      <div className="pt-12 pb-16 space-y-8">
         <div className="max-w-3xl mx-auto px-6 space-y-8">
           <PageHeader align="center" title="Draft something in your voice" />
 
@@ -539,7 +539,7 @@ export default function GeneratePage() {
             )}
           </div>
 
-          <Card className="space-y-6 p-8">
+          <Card className="space-y-6 p-9">
             <div className="relative">
               <textarea
                 id="request"
@@ -547,8 +547,8 @@ export default function GeneratePage() {
                 onChange={(e) => setRequest(e.target.value)}
                 onFocus={() => setRequestFocused(true)}
                 onBlur={() => setRequestFocused(false)}
-                rows={8}
-                className={`${textareaClass} text-[15px]`}
+                rows={14}
+                className={`${textareaClass} text-[16px]`}
               />
               {request.length === 0 && (
                 <span

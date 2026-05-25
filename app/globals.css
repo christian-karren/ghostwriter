@@ -135,20 +135,31 @@ body {
 
 .cta-primary {
   appearance: none;
-  border: none;
   cursor: pointer;
-  color: #fff;
+  color: var(--ink);
   font-weight: 600;
-  background-image: linear-gradient(135deg, var(--violet), var(--indigo));
+  background: transparent;
   border-radius: 11px;
-  box-shadow: 0 6px 18px -6px rgba(124, 58, 237, 0.7);
-  transition: transform 200ms var(--ease), box-shadow 200ms var(--ease),
-    filter 200ms var(--ease);
+  border: 1px solid rgba(26, 23, 38, 0.18);
+  backdrop-filter: saturate(3) brightness(1.04);
+  -webkit-backdrop-filter: saturate(3) brightness(1.04);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.5),
+    0 6px 18px -8px rgba(26, 23, 38, 0.18);
+  transition:
+    transform 200ms var(--ease),
+    box-shadow 200ms var(--ease),
+    backdrop-filter 200ms var(--ease),
+    border-color 200ms var(--ease);
 }
 .cta-primary:hover:not(:disabled) {
   transform: translateY(-1px);
-  box-shadow: 0 10px 24px -6px rgba(124, 58, 237, 0.8);
-  filter: brightness(1.04);
+  border-color: rgba(26, 23, 38, 0.32);
+  backdrop-filter: saturate(3.6) brightness(1.06);
+  -webkit-backdrop-filter: saturate(3.6) brightness(1.06);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.6),
+    0 10px 26px -8px rgba(26, 23, 38, 0.28);
 }
 .cta-primary:active:not(:disabled) {
   transform: translateY(0);
@@ -212,8 +223,8 @@ body {
 .field:focus {
   outline: none;
   background: rgba(255, 255, 255, 0.92);
-  border-color: var(--violet);
-  box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.14);
+  border-color: var(--ink);
+  box-shadow: 0 0 0 3px rgba(26, 23, 38, 0.1);
 }
 
 /* === dropzone === */
