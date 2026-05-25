@@ -16,8 +16,11 @@ export function Nav() {
 
   return (
     <nav className="sticky top-0 z-40 bg-white border-b border-hairline">
-      <div className="max-w-5xl mx-auto px-6 h-16 flex items-center justify-between">
-        <Link href="/voice" className="flex items-center gap-2.5">
+      <div className="h-16 flex items-stretch">
+        <Link
+          href="/voice"
+          className="w-[240px] shrink-0 flex items-center justify-center gap-2.5"
+        >
           <Image
             src="/ghostwriter.png"
             alt="Ghostwriter"
@@ -30,7 +33,7 @@ export function Nav() {
             GHOSTWRITER
           </span>
         </Link>
-        <div className="flex items-center">
+        <div className="flex-1 flex items-center justify-end px-6">
           {TABS.map((tab) => {
             const active =
               pathname === tab.href || pathname?.startsWith(tab.href + "/");

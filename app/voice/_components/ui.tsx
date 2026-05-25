@@ -30,7 +30,7 @@ export function PageHeader({
   return (
     <header className={`relative flex flex-col gap-5 ${alignClass} reveal`}>
       {eyebrow && <Eyebrow>{eyebrow}</Eyebrow>}
-      <h1 className="font-serif text-[44px] sm:text-[56px] md:text-[64px] font-[400] tracking-[-0.015em] leading-[1.04] text-ink max-w-[16ch]">
+      <h1 className="font-serif text-[44px] sm:text-[56px] md:text-[64px] font-[400] tracking-[-0.015em] leading-[1.04] text-ink whitespace-nowrap">
         {title}
       </h1>
       {description && (

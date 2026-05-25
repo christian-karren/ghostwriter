@@ -499,7 +499,7 @@ export default function GeneratePage() {
       />
 
       <div className="pt-12 pb-16 space-y-8">
-        <div className="max-w-3xl mx-auto px-6 space-y-8">
+        <div className="max-w-4xl mx-auto px-6 space-y-8">
           <PageHeader align="center" title="Draft something in your voice" />
 
           <div className="space-y-3">
