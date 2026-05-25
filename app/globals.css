@@ -120,6 +120,16 @@ body {
   background: var(--line);
 }
 
+/* === generate page layout shift === */
+/* On desktop, push content right so it visually centers in a 1456px reference
+   width while the fixed Chat History sidebar occupies the left rail. On mobile
+   the sidebar is hidden, so content fills the natural viewport with no shift. */
+@media (min-width: 768px) {
+  .generate-page-shift {
+    padding-left: max(0px, calc((1456px - 100vw) / 2));
+  }
+}
+
 /* === eyebrows + labels === */
 
 .eyebrow {

@@ -11,6 +11,7 @@ import {
   SecondaryButton,
   textareaClass,
 } from "../_components/ui";
+import { useMobileNav } from "../_components/MobileNav";
 import { DEFAULT_MODEL, generateText } from "../_lib/gemini";
 import {
   buildRetryPrompt,
@@ -489,6 +490,9 @@ export default function GeneratePage() {
   const isWorking = status.state === "generating";
   const isUploading = uploadStatus.state === "processing";
 
+  const { historyOpen: mobileHistoryOpen, closeHistory: closeMobileHistory } =
+    useMobileNav();
+
   return (
     <>
       <HistorySidebar
@@ -496,17 +500,14 @@ export default function GeneratePage() {
         activeId={overlayId}
         onSelect={openHistory}
         onDelete={handleDeleteHistory}
+        mobileOpen={mobileHistoryOpen}
+        onMobileClose={closeMobileHistory}
       />
 
-      <div
-        className="pt-12 pb-16 space-y-8"
-        style={{
-          paddingLeft: "max(0px, calc((1456px - 100vw) / 2))",
-        }}
-      >
+      <div className="pt-12 pb-16 space-y-8 generate-page-shift">
         <div className="max-w-4xl mx-auto px-6 space-y-8">
           <header className="reveal pl-9 sm:pl-7">
-            <h1 className="font-serif text-[36px] sm:text-[44px] md:text-[52px] lg:text-[60px] xl:text-[64px] font-[400] tracking-[-0.015em] leading-[1.04] text-ink whitespace-nowrap">
+            <h1 className="font-serif text-[36px] sm:text-[44px] md:text-[52px] lg:text-[60px] xl:text-[64px] font-[400] tracking-[-0.015em] leading-[1.04] text-ink md:whitespace-nowrap">
               Draft something in your voice
             </h1>
           </header>
@@ -704,65 +705,98 @@ function HistorySidebar({
   activeId,
   onSelect,
   onDelete,
+  mobileOpen,
+  onMobileClose,
 }: {
   items: { id: string; createdAt: number; request: string }[];
   activeId: null | "latest" | string;
   onSelect: (id: string) => void;
   onDelete: (id: string) => void;
+  mobileOpen: boolean;
+  onMobileClose: () => void;
 }) {
+  function handleSelect(id: string) {
+    onSelect(id);
+    onMobileClose();
+  }
+
   return (
-    <aside
-      className="fixed left-0 top-16 bottom-0 w-[240px] z-30 overflow-y-auto p-5 space-y-4"
-      style={{
-        background: "rgba(20, 18, 30, 0.05)",
-        backdropFilter: "blur(20px) saturate(1.15)",
-        WebkitBackdropFilter: "blur(20px) saturate(1.15)",
-        borderRight: "1px solid var(--line)",
-      }}
-    >
-      <Eyebrow>Chat History</Eyebrow>
-      {items.length === 0 ? (
-        <p className="text-[12.5px] text-faint">No drafts yet.</p>
-      ) : (
-        <ul className="space-y-1">
-          {items.map((g) => {
-            const isActive = activeId === g.id;
-            const preview = g.request.trim().slice(0, 80);
-            return (
-              <li key={g.id} className="group/item relative">
-                <button
-                  type="button"
-                  onClick={() => onSelect(g.id)}
-                  className={`w-full text-left px-3 py-2 rounded-md transition-colors ${
-                    isActive
-                      ? "bg-white/40 border border-line"
-                      : "hover:bg-white/30 border border-transparent"
-                  }`}
-                >
-                  <p className="text-[13px] text-ink line-clamp-2 leading-snug">
-                    {preview || "Untitled"}
-                  </p>
-                  <p className="mt-1 text-[10.5px] text-faint mono tracking-wide">
-                    {formatRelativeTime(g.createdAt)}
-                  </p>
-                </button>
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onDelete(g.id);
-                  }}
-                  className="absolute top-2 right-2 text-faint hover:text-rose-500 opacity-0 group-hover/item:opacity-100 transition-opacity text-[12px]"
-                  aria-label="Delete from history"
-                >
-                  ×
-                </button>
-              </li>
-            );
-          })}
-        </ul>
+    <>
+      {/* Mobile backdrop */}
+      {mobileOpen && (
+        <button
+          type="button"
+          aria-label="Close chat history"
+          onClick={onMobileClose}
+          className="md:hidden fixed inset-0 top-16 z-30 bg-black/30 backdrop-blur-sm"
+        />
       )}
-    </aside>
+
+      <aside
+        className={`fixed left-0 top-16 bottom-0 w-[260px] sm:w-[280px] md:w-[240px] z-40 overflow-y-auto p-5 space-y-4 transition-transform duration-200 ease-out ${
+          mobileOpen ? "translate-x-0" : "-translate-x-full"
+        } md:translate-x-0 md:z-30`}
+        style={{
+          background: "rgba(20, 18, 30, 0.05)",
+          backdropFilter: "blur(20px) saturate(1.15)",
+          WebkitBackdropFilter: "blur(20px) saturate(1.15)",
+          borderRight: "1px solid var(--line)",
+        }}
+      >
+        <div className="flex items-center justify-between md:block">
+          <Eyebrow>Chat History</Eyebrow>
+          <button
+            type="button"
+            onClick={onMobileClose}
+            className="md:hidden text-faint hover:text-ink text-[20px] leading-none px-2"
+            aria-label="Close chat history"
+          >
+            ×
+          </button>
+        </div>
+        {items.length === 0 ? (
+          <p className="text-[12.5px] text-faint">No drafts yet.</p>
+        ) : (
+          <ul className="space-y-1">
+            {items.map((g) => {
+              const isActive = activeId === g.id;
+              const preview = g.request.trim().slice(0, 80);
+              return (
+                <li key={g.id} className="group/item relative">
+                  <button
+                    type="button"
+                    onClick={() => handleSelect(g.id)}
+                    className={`w-full text-left px-3 py-2 rounded-md transition-colors ${
+                      isActive
+                        ? "bg-white/40 border border-line"
+                        : "hover:bg-white/30 border border-transparent"
+                    }`}
+                  >
+                    <p className="text-[13px] text-ink line-clamp-2 leading-snug">
+                      {preview || "Untitled"}
+                    </p>
+                    <p className="mt-1 text-[10.5px] text-faint mono tracking-wide">
+                      {formatRelativeTime(g.createdAt)}
+                    </p>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onDelete(g.id);
+                    }}
+                    className="absolute top-2 right-2 text-faint hover:text-rose-500 opacity-0 group-hover/item:opacity-100 transition-opacity text-[12px]"
+                    aria-label="Delete from history"
+                  >
+                    ×
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </aside>
+    </>
   );
 }
 
