@@ -506,7 +506,9 @@ export default function GeneratePage() {
         }}
       >
         <div className="max-w-4xl mx-auto px-6 space-y-8">
-          <PageHeader align="center" title="Draft something in your voice" />
+          <div className="pl-9 sm:pl-7">
+            <PageHeader title="Draft something in your voice" />
+          </div>
 
           <div className="space-y-3">
             {!hasKey && (
