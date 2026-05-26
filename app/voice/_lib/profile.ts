@@ -39,8 +39,19 @@ export async function extractVoiceProfile(opts: {
     systemPrompt: PROFILE_SYSTEM,
     userPrompt: sampleText,
     temperature: 0.4,
-    maxOutputTokens: 2048,
+    // Generous output budget so a verbose profile never gets truncated mid-word.
+    maxOutputTokens: 8192,
+    // Disable thinking for this structured summarization task. Thinking tokens
+    // count against maxOutputTokens on Gemini 2.5 thinking models, which can
+    // silently truncate the visible profile.
+    thinkingBudget: 0,
   });
+
+  if (result.finishReason === "MAX_TOKENS" || result.finishReason === "LENGTH") {
+    console.warn(
+      `Voice profile may be truncated (finishReason: ${result.finishReason}).`,
+    );
+  }
 
   return {
     profile: result.text.trim(),

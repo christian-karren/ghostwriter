@@ -46,6 +46,7 @@ type DataContextValue = {
   refreshCorrections: () => Promise<void>;
   refreshGenerations: () => Promise<void>;
   refreshAll: () => Promise<void>;
+  regenerateProfile: () => Promise<void>;
 };
 
 const DataContext = createContext<DataContextValue | null>(null);
@@ -161,6 +162,35 @@ export function DataProvider({ children }: { children: ReactNode }) {
     };
   }, [samples, settings?.apiKey, profile, refreshProfile]);
 
+  const regenerateProfile = useCallback(async () => {
+    if (!settings?.apiKey) {
+      throw new Error("No API key set. Add your Gemini API key in Settings.");
+    }
+    if (samples.length === 0) {
+      throw new Error("No samples to analyze. Add at least one writing sample first.");
+    }
+    if (inFlightRef.current) return;
+    inFlightRef.current = true;
+    setProfileSyncing(true);
+    setProfileSyncError(null);
+    try {
+      const fullSamples = await hydrateSamples(samples);
+      const next = await extractVoiceProfile({
+        apiKey: settings.apiKey,
+        samples: fullSamples,
+      });
+      await saveProfile(next, false);
+      await refreshProfile();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setProfileSyncError(message);
+      throw err;
+    } finally {
+      inFlightRef.current = false;
+      setProfileSyncing(false);
+    }
+  }, [samples, settings?.apiKey, refreshProfile]);
+
   const value = useMemo<DataContextValue | null>(() => {
     if (settings === null || corrections === null) return null;
     return {
@@ -179,6 +209,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
       refreshCorrections,
       refreshGenerations,
       refreshAll,
+      regenerateProfile,
     };
   }, [
     samples,
@@ -195,6 +226,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
     refreshCorrections,
     refreshGenerations,
     refreshAll,
+    regenerateProfile,
   ]);
 
   if (phase.state === "error") {

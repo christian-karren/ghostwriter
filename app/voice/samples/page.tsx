@@ -36,6 +36,7 @@ export default function SamplesPage() {
     profileSyncing,
     profileSyncError,
     refreshSamples,
+    regenerateProfile,
   } = useData();
 
   const [hydrated, setHydrated] = useState<Map<string, string>>(new Map());
@@ -270,17 +271,34 @@ export default function SamplesPage() {
               your samples change.
             </p>
           </div>
-          {profile && !profileSyncing && (
-            <span className="mono text-[11px] text-faint shrink-0 tracking-wide">
-              {formatRelativeTime(profile.generatedAt)}
-            </span>
-          )}
-          {profileSyncing && (
-            <span className="inline-flex items-center gap-1.5 text-[11px] text-violet shrink-0">
-              <span className="h-1.5 w-1.5 rounded-full bg-violet animate-pulse" />
-              Distilling…
-            </span>
-          )}
+          <div className="flex items-center gap-3 shrink-0">
+            {profile && !profileSyncing && (
+              <span className="mono text-[11px] text-faint tracking-wide">
+                {formatRelativeTime(profile.generatedAt)}
+              </span>
+            )}
+            {profileSyncing && (
+              <span className="inline-flex items-center gap-1.5 text-[11px] text-violet">
+                <span className="h-1.5 w-1.5 rounded-full bg-violet animate-pulse" />
+                Distilling…
+              </span>
+            )}
+            {profile &&
+              !profileSyncing &&
+              hasKey &&
+              samples.length > 0 &&
+              !profile.userEdited && (
+                <GhostButton
+                  onClick={() => {
+                    regenerateProfile().catch((err) =>
+                      console.error("regenerate profile failed", err),
+                    );
+                  }}
+                >
+                  Regenerate
+                </GhostButton>
+              )}
+          </div>
         </div>
         <Card className="space-y-5">
           {!profile && samples.length === 0 && (

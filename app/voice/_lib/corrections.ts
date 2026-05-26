@@ -70,7 +70,8 @@ export async function extractLessons(opts: {
     systemPrompt: EXTRACT_SYSTEM,
     userPrompt,
     temperature: 0.3,
-    maxOutputTokens: 1200,
+    maxOutputTokens: 4096,
+    thinkingBudget: 0,
   });
 
   return parseLessons(result.text);
@@ -99,7 +100,8 @@ export async function consolidateDigest(opts: {
     systemPrompt: CONSOLIDATE_SYSTEM,
     userPrompt,
     temperature: 0.3,
-    maxOutputTokens: 2048,
+    maxOutputTokens: 8192,
+    thinkingBudget: 0,
   });
 
   return result.text.trim();

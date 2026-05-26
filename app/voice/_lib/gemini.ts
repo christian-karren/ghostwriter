@@ -9,6 +9,12 @@ type GenerateOptions = {
   userPrompt: string;
   temperature?: number;
   maxOutputTokens?: number;
+  /**
+   * Gemini 2.5 thinking budget in tokens. Set to 0 to disable thinking for
+   * deterministic summarization tasks where thinking just eats output budget.
+   * Leave undefined to let the model decide (default).
+   */
+  thinkingBudget?: number;
 };
 
 export type GenerateResult = {
@@ -33,6 +39,7 @@ export async function generateText(opts: GenerateOptions): Promise<GenerateResul
     userPrompt,
     temperature = 0.7,
     maxOutputTokens = 8192,
+    thinkingBudget,
   } = opts;
 
   if (!apiKey) {
@@ -43,14 +50,19 @@ export async function generateText(opts: GenerateOptions): Promise<GenerateResul
     model,
   )}:generateContent?key=${encodeURIComponent(apiKey)}`;
 
+  const generationConfig: Record<string, unknown> = {
+    temperature,
+    maxOutputTokens,
+    topP: 0.95,
+  };
+  if (typeof thinkingBudget === "number") {
+    generationConfig.thinkingConfig = { thinkingBudget };
+  }
+
   const body = {
     contents: [{ role: "user", parts: [{ text: userPrompt }] }],
     systemInstruction: { parts: [{ text: systemPrompt }] },
-    generationConfig: {
-      temperature,
-      maxOutputTokens,
-      topP: 0.95,
-    },
+    generationConfig,
   };
 
   const res = await fetch(url, {
