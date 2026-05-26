@@ -56,10 +56,8 @@ export default function OnboardingPage() {
     if (step === "samples") {
       return (
         <SamplesStep
-          onUploaded={async () => {
-            await refreshSamples();
-            await transitionTo("apiKey");
-          }}
+          onSamplesChanged={refreshSamples}
+          onContinue={() => transitionTo("apiKey")}
           onSkip={() => transitionTo("apiKey")}
         />
       );
@@ -130,10 +128,12 @@ function WelcomeStep({ onAdvance }: { onAdvance: () => void }) {
 }
 
 function SamplesStep({
-  onUploaded,
+  onSamplesChanged,
+  onContinue,
   onSkip,
 }: {
-  onUploaded: () => void | Promise<void>;
+  onSamplesChanged: () => Promise<void>;
+  onContinue: () => void;
   onSkip: () => void;
 }) {
   const [dragDepth, setDragDepth] = useState(0);
@@ -141,6 +141,7 @@ function SamplesStep({
     state: "idle" | "processing" | "error";
     message?: string;
   }>({ state: "idle" });
+  const [uploaded, setUploaded] = useState<string[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const isDragging = dragDepth > 0;
   const isProcessing = status.state === "processing";
@@ -159,7 +160,7 @@ function SamplesStep({
       message: `Reading ${list.length} ${list.length === 1 ? "PDF" : "PDFs"}…`,
     });
 
-    let added = 0;
+    const added: string[] = [];
     const errors: string[] = [];
     for (const file of list) {
       try {
@@ -178,7 +179,7 @@ function SamplesStep({
           mimeType: "application/pdf",
           extractedText: text,
         });
-        added += 1;
+        added.push(cleanName);
       } catch (err) {
         errors.push(`${file.name}: ${err instanceof Error ? err.message : String(err)}`);
       }
@@ -186,9 +187,14 @@ function SamplesStep({
 
     if (fileInputRef.current) fileInputRef.current.value = "";
 
-    if (added > 0) {
-      setStatus({ state: "idle" });
-      await onUploaded();
+    if (added.length > 0) {
+      setUploaded((prev) => [...prev, ...added]);
+      await onSamplesChanged();
+      if (errors.length > 0) {
+        setStatus({ state: "error", message: errors.join(" | ") });
+      } else {
+        setStatus({ state: "idle" });
+      }
       return;
     }
     setStatus({
@@ -252,7 +258,7 @@ function SamplesStep({
           onDragLeave={handleDragLeave}
           onDragOver={handleDragOver}
           onDrop={handleDrop}
-          className={`mt-10 w-full flex flex-col items-center justify-center gap-3 rounded-2xl border-2 border-dashed px-6 py-16 text-center transition-all ${
+          className={`mt-10 w-full flex flex-col items-center justify-center gap-3 rounded-2xl border-2 border-dashed px-6 py-12 text-center transition-all ${
             isProcessing
               ? "cursor-wait border-neutral-300 bg-neutral-50"
               : isDragging
@@ -272,7 +278,9 @@ function SamplesStep({
               ? status.message
               : isDragging
                 ? "Release to upload"
-                : "Drop PDFs here, or click to browse"}
+                : uploaded.length > 0
+                  ? "Drop more PDFs, or click to add"
+                  : "Drop PDFs here, or click to browse"}
           </p>
           {!isProcessing && !isDragging && (
             <p className="text-[12.5px] text-neutral-500 font-mono">PDF only</p>
@@ -289,11 +297,40 @@ function SamplesStep({
           />
         </label>
 
+        {uploaded.length > 0 && (
+          <div className="mt-6 w-full">
+            <p className="text-[11.5px] uppercase tracking-eyebrow text-neutral-500 mb-3">
+              Added ({uploaded.length})
+            </p>
+            <ul className="space-y-1.5 max-h-40 overflow-y-auto">
+              {uploaded.map((name, i) => (
+                <li
+                  key={`${name}-${i}`}
+                  className="flex items-center gap-2 text-[13.5px] text-neutral-700"
+                >
+                  <CheckIcon />
+                  <span className="truncate">{name}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
         {status.state === "error" && status.message && (
           <p className="mt-4 text-[13px] text-red-600 text-center max-w-md">
             {status.message}
           </p>
         )}
+
+        <button
+          type="button"
+          onClick={onContinue}
+          disabled={uploaded.length === 0 || isProcessing}
+          className="mt-8 inline-flex items-center justify-center gap-1.5 rounded-full bg-neutral-900 text-white px-6 py-3 text-[14px] font-medium tracking-tight transition-all hover:bg-neutral-800 disabled:opacity-40 disabled:pointer-events-none"
+        >
+          Continue
+          <span aria-hidden className="ml-0.5">→</span>
+        </button>
       </div>
     </div>
   );
@@ -450,6 +487,24 @@ function UploadIcon() {
       <path d="M12 16V4" />
       <path d="m7 9 5-5 5 5" />
       <path d="M5 16v2a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-2" />
+    </svg>
+  );
+}
+
+function CheckIcon() {
+  return (
+    <svg
+      className="h-3.5 w-3.5 shrink-0 text-emerald-600"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2.25}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      xmlns="http://www.w3.org/2000/svg"
+      aria-hidden
+    >
+      <path d="M20 6 9 17l-5-5" />
     </svg>
   );
 }
